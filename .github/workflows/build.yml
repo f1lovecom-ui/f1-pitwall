@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       years:
-        description: "Seasons to build, e.g. 2023,2024 (leave blank for last season and this season)"
+        description: "Seasons to build, 2023 or later, e.g. 2023,2024 (blank = last season and this season)"
         required: false
         default: ""
       force:
@@ -37,8 +37,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install FastF1
-        run: pip install fastf1
+      - name: Install dependencies
+        run: pip install requests numpy
 
       - name: Build race files
         env:
