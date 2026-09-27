@@ -21,7 +21,9 @@ import json
 import math
 import os
 import re
+import sys
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -341,6 +343,7 @@ def main():
     fastf1.set_log_level("WARNING")
     deadline = time.time() + args.budget_min * 60
     built = failed = 0
+    first_error = None
     stop = False
 
     for year in years:
@@ -380,10 +383,17 @@ def main():
                     log(f"  wrote {path} ({path.stat().st_size / 1e6:.1f} MB, {time.time() - started:.0f} s)")
                 except Exception as e:
                     failed += 1
-                    log(f"  failed: {e}")
+                    log(f"  failed: {type(e).__name__}: {e}")
+                    if first_error is None:
+                        first_error = traceback.format_exc()
+                        log(first_error)
 
-    write_index()
     log(f"Done: {built} built, {failed} failed.")
+    if failed and not built:
+        # Stop here so the workflow shows a red cross and the live site is left untouched.
+        log("Every race failed to build, so nothing will be published. See the first error above.")
+        sys.exit(1)
+    write_index()
 
 
 if __name__ == "__main__":

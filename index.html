@@ -296,11 +296,11 @@ async function init(){
   setMsg('Loading the race list…');
   try { S.index = await fetchJSON(DATA + 'index.json', null, true); }
   catch {
-    setMsg('No race data has been published yet. On GitHub, open the Actions tab and run "Build and publish". When it finishes, reload this page.', [['Reload', () => location.reload(), true]]);
+    setMsg("Race replays couldn't be loaded right now. Check your connection and try again.", [['Try again', () => location.reload(), true]]);
     return;
   }
   const years = Object.keys(S.index.seasons || {}).sort((a, b) => b - a);
-  if (!years.length){ setMsg('The race list is empty. Run "Build and publish" on the Actions tab, then reload.'); return; }
+  if (!years.length){ setMsg('Race replays are on their way. Check back soon.'); return; }
   if (S.index.updated) $('updated').textContent = 'Data updated ' + new Date(S.index.updated).toLocaleDateString();
   for (const y of years) yearSel.add(new Option(y, y));
   const [hy, hr, hs] = decodeURIComponent(location.hash.slice(1)).split('/');
@@ -328,7 +328,7 @@ async function loadRace(year, race, sess){
   }
   if (gen !== S.gen) return;
   try { prepare(D); }
-  catch (e){ console.error(e); setMsg('This race file looks damaged. Try rebuilding it with the "force" option on the Actions tab.'); return; }
+  catch (e){ console.error(e); setMsg("This race couldn't be opened. Try another race."); return; }
   setMsg(null);
 }
 
