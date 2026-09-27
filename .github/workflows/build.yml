@@ -1,0 +1,78 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * 1"   # Mondays 05:00 UTC, after race weekends
+    - cron: "0 5 * * 4"   # Thursdays, to catch anything that failed on Monday
+  workflow_dispatch:
+    inputs:
+      years:
+        description: "Seasons to build, e.g. 2023,2024 (leave blank for last season and this season)"
+        required: false
+        default: ""
+      force:
+        description: "Rebuild races that already exist"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build-and-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FastF1
+        run: pip install fastf1
+
+      - name: Build race files
+        env:
+          YEARS: ${{ inputs.years }}
+          BUDGET_MIN: "300"
+        run: python build_races.py ${{ inputs.force && '--force' || '' }}
+
+      - name: Save new race files to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if ! git diff --cached --quiet; then
+            git commit -m "Update race data"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp -r data _site/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
