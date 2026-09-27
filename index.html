@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pit Wall: F1 race replays</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏁</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#1B2230;--panel:#222B3B;--panel2:#2B3549;--line:#36425A;
+  --text:#E8ECF2;--muted:#95A2B7;--flag:#F5B83D;--red:#E5484D;--green:#3DBE7A;
+  --cond:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px/1.45 var(--body)}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--flag);outline-offset:2px}
+.app{display:grid;grid-template-rows:auto minmax(0,1fr);height:100dvh;padding-top:env(safe-area-inset-top,0px)}
+
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font:700 24px/1 var(--cond);display:flex;align-items:center;gap:9px;white-space:nowrap}
+.brand i{width:16px;height:16px;border-radius:2px;background:repeating-conic-gradient(var(--text) 0 25%,var(--bg) 0 50%) 0 0/8px 8px}
+.pickers{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
+.updated{color:var(--muted);font-size:12px;white-space:nowrap}
+select,.btn{background-color:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:14px;font-weight:500;cursor:pointer;max-width:100%;min-height:36px}
+select{appearance:none;-webkit-appearance:none;padding-right:30px;min-width:0;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%2395A2B7' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;background-size:12px 8px}
+#raceSel{max-width:300px}
+.btn:hover,select:hover{border-color:var(--muted)}
+.btn.primary{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:600}
+
+main{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:minmax(0,1fr) auto;grid-template-areas:"stage side" "time side";min-height:0}
+.stage{grid-area:stage;position:relative;min-height:0;overflow:hidden}
+#map{position:absolute;inset:0;width:100%;height:100%;display:block}
+.hud{position:absolute;left:20px;top:16px;pointer-events:none}
+.hud .title{font:600 20px/1.15 var(--cond)}
+.hud .sub{color:var(--muted);font-size:13px}
+.big{font:700 68px/.95 var(--cond);font-variant-numeric:tabular-nums;margin-top:6px}
+.big small{font-size:26px;color:var(--muted);font-weight:600}
+.flag{display:inline-block;margin-top:8px;padding:3px 10px;border-radius:4px;font:700 15px var(--cond)}
+.flag[hidden]{display:none}
+.flag[data-k=sc],.flag[data-k=vsc]{background:var(--flag);color:var(--bg)}
+.flag[data-k=red]{background:var(--red);color:#fff}
+.flag[data-k=chq]{background:var(--text);color:var(--bg)}
+.maptools{position:absolute;right:14px;top:14px;display:flex;gap:6px}
+.msg{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:rgba(27,34,48,.8)}
+.msg[hidden]{display:none}
+.msg .box{max-width:460px}
+.msg p{margin:0 0 14px;font-size:16px}
+.msg .acts{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.toast{position:absolute;left:16px;bottom:16px;max-width:calc(100% - 32px);display:flex;align-items:center;gap:10px;padding:10px 14px 10px 10px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:6px;font-size:15px;transition:opacity .3s,transform .3s}
+.toast[hidden]{display:flex;opacity:0;transform:translateY(8px);pointer-events:none}
+.toast b{font:700 15px var(--cond);color:var(--muted)}
+
+.side{grid-area:side;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;padding:11px 6px;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);font:600 16px var(--cond);cursor:pointer}
+.tabs button[aria-selected=true]{color:var(--text);border-bottom-color:var(--flag)}
+.pane{overflow:auto;flex:1;min-height:0}
+.pane[hidden]{display:none}
+.empty{color:var(--muted);padding:18px 16px;margin:0}
+
+.tower{position:relative}
+.row{position:absolute;left:0;right:0;top:0;height:36px;display:grid;grid-template-columns:26px 4px 42px minmax(0,1fr) 24px 78px;align-items:center;gap:8px;padding:0 12px;background:none;border:0;text-align:left;cursor:pointer;transition:transform .45s ease}
+.row:hover{background:rgba(255,255,255,.03)}
+.row.sel{background:var(--panel2)}
+.row.out{opacity:.4}
+.row.out .gap{color:var(--red)}
+.row .pos{font:700 18px var(--cond);text-align:right;font-variant-numeric:tabular-nums}
+.row .sw{height:20px;border-radius:2px}
+.row .code{font:700 17px var(--cond)}
+.row .team{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .tyre{width:22px;height:22px;border-radius:50%;border:3px solid var(--c,transparent);display:grid;place-items:center;font:700 11px/1 var(--cond)}
+.row .gap{text-align:right;font:600 15px var(--cond);font-variant-numeric:tabular-nums;color:var(--muted)}
+
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{position:sticky;top:0;background:var(--panel);text-align:left;color:var(--muted);font:600 13px var(--cond);padding:9px 8px;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid rgba(54,66,90,.55);vertical-align:middle}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+td .drv{display:flex;align-items:center;gap:8px}
+td .drv > span{width:4px;height:18px;border-radius:2px;flex:none}
+td .drv b{font:700 16px var(--cond)}
+td .drv small{display:block;color:var(--muted);font-size:12px}
+
+.rc,.moments{list-style:none;margin:0;padding:0}
+.rc li{padding:10px 14px;border-bottom:1px solid rgba(54,66,90,.55);display:grid;grid-template-columns:44px 1fr;gap:10px;font-size:14px}
+.when{font:600 14px var(--cond);color:var(--muted);font-variant-numeric:tabular-nums}
+.rc .chip{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.moments button{width:100%;display:grid;grid-template-columns:4px 44px 1fr;gap:10px;align-items:center;padding:10px 14px;background:none;border:0;border-bottom:1px solid rgba(54,66,90,.55);text-align:left;cursor:pointer;font-size:14px}
+.moments button:hover{background:rgba(255,255,255,.03)}
+.moments .bar{height:22px;border-radius:2px;background:var(--c)}
+.moments .later{opacity:.45}
+.moments .now{background:var(--panel2)}
+
+.timeline{grid-area:time;display:flex;align-items:center;gap:12px;padding:10px 16px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--panel)}
+.play{width:42px;height:42px;flex:none;border-radius:50%;background:var(--text);color:var(--bg);border:0;display:grid;place-items:center;cursor:pointer}
+.play svg{width:18px;height:18px}
+.clock{font:600 17px var(--cond);font-variant-numeric:tabular-nums;min-width:70px}
+.status{font-size:12px;color:var(--muted);display:block;font-family:var(--body);font-weight:500}
+.scrub{position:relative;flex:1;height:54px;min-width:120px}
+.scrub input{position:absolute;left:0;right:0;top:2px;width:100%;margin:0;accent-color:var(--flag);cursor:pointer}
+.marks{position:absolute;left:0;right:0;top:24px;height:28px;pointer-events:none}
+.band{position:absolute;top:7px;height:4px;border-radius:2px;opacity:.55}
+.tick{position:absolute;top:16px;width:1px;height:5px;background:var(--muted);opacity:.5}
+.tick em{position:absolute;top:5px;left:-10px;width:20px;text-align:center;font:600 10px var(--cond);font-style:normal;color:var(--muted)}
+.pin{position:absolute;top:0;width:18px;height:18px;margin-left:-9px;padding:0;border:0;background:none;cursor:pointer;pointer-events:auto;display:grid;place-items:center}
+.pin i{width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 0 2px var(--panel)}
+.pin[data-k=out] i{border-radius:1px;transform:rotate(45deg)}
+.pin:hover i,.pin:focus-visible i{transform:scale(1.5)}
+.pin[data-k=out]:hover i{transform:rotate(45deg) scale(1.5)}
+
+@media (max-width:860px){
+  .app{height:auto;min-height:100dvh}
+  header{display:grid;grid-template-columns:auto 1fr;gap:10px;padding:10px 12px}
+  .updated{justify-self:end}
+  .pickers{grid-column:1/-1;display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px}
+  #raceSel{grid-column:1/-1;max-width:none}
+  select{width:100%;font-size:16px;min-height:42px}
+  main{grid-template-columns:minmax(0,1fr);grid-template-rows:58vh auto auto;grid-template-areas:"stage" "time" "side"}
+  .side{border-left:0;border-top:1px solid var(--line)}
+  .pane{overflow:visible}
+  .big{font-size:46px}
+  .row{grid-template-columns:26px 4px minmax(0,1fr) 24px 78px}
+  .row .team{display:none}
+  .tabs button{font-size:15px;padding:11px 4px}
+  .timeline{flex-wrap:wrap;padding-top:6px}
+  .scrub{order:-1;flex-basis:100%}
+  .toast{left:10px;bottom:10px;font-size:14px}
+}
+@media (prefers-reduced-motion:reduce){.row,.toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><i></i>Pit Wall</div>
+    <div class="pickers">
+      <select id="yearSel" aria-label="Season"></select>
+      <select id="raceSel" aria-label="Grand Prix"></select>
+      <select id="sessionSel" aria-label="Session"></select>
+    </div>
+    <span class="updated" id="updated"></span>
+  </header>
+
+  <main>
+    <section class="stage" id="stage">
+      <canvas id="map" aria-label="Track map with car positions"></canvas>
+      <div class="hud">
+        <div class="title" id="hudTitle"></div>
+        <div class="sub" id="hudSub"></div>
+        <div class="big" id="hudBig"></div>
+        <span class="flag" id="flag" hidden></span>
+      </div>
+      <div class="maptools"><button class="btn" id="rotateBtn" title="Rotate map">Rotate</button></div>
+      <div class="toast" id="toast" hidden role="status" aria-live="polite"><b id="toastLap"></b><span id="toastText"></span></div>
+      <div class="msg" id="msg" role="status" aria-live="polite" hidden>
+        <div class="box"><p id="msgText"></p><div class="acts" id="msgActs"></div></div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-pane="towerPane" aria-selected="true">Timing</button>
+        <button role="tab" data-pane="momentsPane" aria-selected="false">Moments</button>
+        <button role="tab" data-pane="resultsPane" aria-selected="false">Results</button>
+        <button role="tab" data-pane="rcPane" aria-selected="false">Race control</button>
+      </div>
+      <div class="pane" id="towerPane"><div class="tower" id="tower"></div></div>
+      <div class="pane" id="momentsPane" hidden><ul class="moments" id="momentsList"></ul></div>
+      <div class="pane" id="resultsPane" hidden></div>
+      <div class="pane" id="rcPane" hidden><ul class="rc" id="rcList"></ul></div>
+    </aside>
+
+    <footer class="timeline">
+      <button class="play" id="playBtn" aria-label="Play"></button>
+      <div class="clock"><span id="clock">0:00</span><span class="status" id="status"></span></div>
+      <div class="scrub">
+        <input type="range" id="slider" min="0" max="1" step="0.25" value="0" aria-label="Race timeline">
+        <div class="marks" id="marks"></div>
+      </div>
+      <select id="speedSel" aria-label="Playback speed">
+        <option value="1">1×</option><option value="2">2×</option><option value="5">5×</option>
+        <option value="10" selected>10×</option><option value="20">20×</option><option value="50">50×</option>
+      </select>
+    </footer>
+  </main>
+</div>
+
+<script>
+"use strict";
+const DATA = 'data/';
+const ROW_H = 36;
+const TYRE = {SOFT:['S','#E5484D'],MEDIUM:['M','#F5C542'],HARD:['H','#E8ECF2'],INTERMEDIATE:['I','#3DBE7A'],WET:['W','#5B8DEF']};
+const COL = {bg:'#1B2230', kerb:'#2E384B', tarmac:'#4B5872', text:'#E8ECF2', flag:'#F5B83D', red:'#E5484D'};
+const EV_COLOR = { pit:'#5B8DEF', fastest:'#A970FF', out:'#E5484D', sc:'#F5B83D', red:'#E5484D', green:'#3DBE7A', lead:'#E8ECF2', penalty:'#F08A4B', flag:'#E8ECF2' };
+const CLS = { R:'DNF', N:'NC', E:'EXC', D:'DSQ', W:'DNS', F:'DNQ' };
+
+const $ = id => document.getElementById(id);
+
+/* ---------- helpers ---------- */
+function bsLast(arr, t, get = x => x){
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi){ const m = (lo + hi) >> 1; if (get(arr[m]) <= t){ ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
+}
+function lastAt(arr, t){ if (!arr || !arr.length) return undefined; const i = bsLast(arr, t, o => o.t); return i >= 0 ? arr[i] : undefined; }
+function fmtClock(ms){
+  const neg = ms < 0; let s = Math.floor(Math.abs(ms) / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); s %= 60;
+  const body = h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+  return (neg ? '−' : '') + body;
+}
+function fmtDur(sec){
+  if (sec == null || !isFinite(sec)) return '';
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = (sec % 60).toFixed(3).padStart(6, '0');
+  return h ? `${h}:${String(m).padStart(2,'0')}:${s}` : `${m}:${s}`;
+}
+function fmtGap(v){
+  if (typeof v === 'number') return '+' + v.toFixed(3);
+  if (typeof v !== 'string') return '';
+  const m = v.match(/^\+?(\d+)\s*L(APS?)?$/i);
+  if (m) return `+${m[1]} lap${m[1] === '1' ? '' : 's'}`;
+  return /^LAP/i.test(v) ? '' : v;
+}
+async function fetchJSON(url, onProgress, noCache){
+  const res = await fetch(url, noCache ? { cache: 'no-cache' } : {});
+  if (!res.ok) throw new Error(String(res.status));
+  if (!onProgress || !res.body) return res.json();
+  const reader = res.body.getReader(), parts = []; let got = 0;
+  for (;;){ const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; onProgress(got); }
+  const buf = new Uint8Array(got); let o = 0;
+  for (const p of parts){ buf.set(p, o); o += p.length; }
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+function setMsg(text, actions = []){
+  const el = $('msg');
+  if (!text){ el.hidden = true; return; }
+  $('msgText').textContent = text;
+  const acts = $('msgActs'); acts.innerHTML = '';
+  for (const [label, fn, primary] of actions){
+    const b = document.createElement('button'); b.className = 'btn' + (primary ? ' primary' : '');
+    b.textContent = label; b.onclick = fn; acts.appendChild(b);
+  }
+  el.hidden = false;
+}
+
+/* ---------- state ---------- */
+const S = {
+  gen: 0, index: null, drivers: new Map(), rows: new Map(),
+  X: {}, Y: {}, hz: 4, frame0: 0, frames: 0,
+  posBy: {}, intBy: {}, lapsBy: {}, rc: [], pits: [], results: [],
+  periods: [], chequered: null, isRace: true, raceStart: null, totalLaps: 0, typical: 95,
+  t0: 0, t1: 0, t: 0, playing: false, speed: 10,
+  outline: [], fit: null, rot: 0, selected: null, order: [], rcShown: -1,
+  retired: {}, events: [], evIdx: -1, seeked: true, momentsShown: -2, loaded: false
+};
+
+/* ---------- race list ---------- */
+const yearSel = $('yearSel'), raceSel = $('raceSel'), sessionSel = $('sessionSel');
+function racesOf(year){ return (S.index.seasons[year] || []).slice().sort((a, b) => a.round - b.round); }
+function fillRaces(year, round, sessName){
+  const races = racesOf(year);
+  raceSel.innerHTML = '';
+  for (const r of races) raceSel.add(new Option(r.name.replace(/ Grand Prix$/, ' GP'), String(r.round)));
+  const pickR = races.find(r => r.round == round) || races[races.length - 1];
+  if (!pickR) return;
+  raceSel.value = String(pickR.round);
+  fillSessions(year, pickR, sessName);
+}
+function fillSessions(year, race, sessName){
+  sessionSel.innerHTML = '';
+  for (const s of race.sessions) sessionSel.add(new Option(s.name, s.file));
+  const s = race.sessions.find(x => x.name.toLowerCase() === (sessName || '').toLowerCase())
+         || race.sessions.find(x => x.name === 'Race') || race.sessions[0];
+  sessionSel.value = s.file;
+  loadRace(year, race, s);
+}
+yearSel.onchange = () => fillRaces(yearSel.value);
+raceSel.onchange = () => { const r = racesOf(yearSel.value).find(x => x.round == raceSel.value); if (r) fillSessions(yearSel.value, r); };
+sessionSel.onchange = () => {
+  const r = racesOf(yearSel.value).find(x => x.round == raceSel.value);
+  const s = r && r.sessions.find(x => x.file === sessionSel.value);
+  if (s) loadRace(yearSel.value, r, s);
+};
+
+async function init(){
+  if (location.protocol === 'file:'){
+    setMsg('Open the app from its GitHub Pages address (https://yourname.github.io/…). Browsers block loading the race files when the page is opened straight from your computer.');
+    return;
+  }
+  setMsg('Loading the race list…');
+  try { S.index = await fetchJSON(DATA + 'index.json', null, true); }
+  catch {
+    setMsg('No race data has been published yet. On GitHub, open the Actions tab and run "Build and publish". When it finishes, reload this page.', [['Reload', () => location.reload(), true]]);
+    return;
+  }
+  const years = Object.keys(S.index.seasons || {}).sort((a, b) => b - a);
+  if (!years.length){ setMsg('The race list is empty. Run "Build and publish" on the Actions tab, then reload.'); return; }
+  if (S.index.updated) $('updated').textContent = 'Data updated ' + new Date(S.index.updated).toLocaleDateString();
+  for (const y of years) yearSel.add(new Option(y, y));
+  const [hy, hr, hs] = decodeURIComponent(location.hash.slice(1)).split('/');
+  const year = years.includes(hy) ? hy : years[0];
+  yearSel.value = year;
+  fillRaces(year, hr, hs);
+}
+
+/* ---------- loading one race ---------- */
+async function loadRace(year, race, sess){
+  const gen = ++S.gen;
+  setPlaying(false);
+  S.loaded = false;
+  history.replaceState(null, '', `#${year}/${race.round}/${sess.name.toLowerCase()}`);
+  $('hudTitle').textContent = race.name;
+  $('hudSub').textContent = `${sess.name}, ${year}`;
+  $('hudBig').textContent = ''; $('flag').hidden = true; $('toast').hidden = true;
+  setMsg('Downloading race data…');
+  let D;
+  try {
+    D = await fetchJSON(DATA + sess.file, got => { if (gen === S.gen) $('msgText').textContent = `Downloading race data… ${(got / 1048576).toFixed(1)} MB`; });
+  } catch {
+    if (gen === S.gen) setMsg("Couldn't download this race's data. Check your connection, then try again.", [['Try again', () => loadRace(year, race, sess), true]]);
+    return;
+  }
+  if (gen !== S.gen) return;
+  try { prepare(D); }
+  catch (e){ console.error(e); setMsg('This race file looks damaged. Try rebuilding it with the "force" option on the Actions tab.'); return; }
+  setMsg(null);
+}
+
+function prepare(D){
+  const M = D.meta;
+  S.hz = M.hz; S.frames = M.frames; S.frame0 = M.frame0 * 1000;
+  S.t0 = S.frame0; S.t1 = S.frame0 + (M.frames - 1) / M.hz * 1000;
+  S.raceStart = M.lightsOut * 1000; S.totalLaps = M.totalLaps;
+  S.isRace = true;
+
+  S.drivers = new Map();
+  for (const d of D.drivers) S.drivers.set(d.n, d);
+
+  // decode delta-encoded positions into flat arrays per driver
+  S.X = {}; S.Y = {};
+  for (const n in D.pos){
+    const X = new Float32Array(M.frames).fill(NaN), Y = new Float32Array(M.frames).fill(NaN);
+    for (const [start, xs, ys] of D.pos[n]){
+      let x = 0, y = 0;
+      for (let k = 0; k < xs.length; k++){ x += xs[k]; y += ys[k]; X[start + k] = x; Y[start + k] = y; }
+    }
+    S.X[n] = X; S.Y[n] = Y;
+  }
+
+  S.lapsBy = {};
+  for (const n in D.laps) S.lapsBy[n] = D.laps[n].map(r => ({ t: r[1] * 1000, v: r[0], dur: r[2], out: !!r[3], inn: !!r[4], cmp: r[5] })).sort((a, b) => a.t - b.t);
+  S.posBy = {}; S.intBy = {};
+  for (const n in D.timing){
+    const rows = D.timing[n];
+    S.posBy[n] = rows.filter(r => r[1] != null).map(r => ({ t: r[0] * 1000, v: r[1] }));
+    S.intBy[n] = rows.filter(r => r[2] != null || r[3] != null).map(r => ({ t: r[0] * 1000, gap: r[2], int: r[3] }));
+  }
+  S.rc = D.rc.map(r => ({ t: r[0] * 1000, lap: r[1], category: r[2], flag: r[3], scope: r[4], message: r[5] || '' }));
+  S.pits = D.pits.map(r => ({ t: r[0] * 1000, n: r[1], lap: r[2], dur: r[3] }));
+  S.results = D.results || [];
+
+  const durs = [];
+  for (const k in S.lapsBy) for (const l of S.lapsBy[k]) if (l.dur && !l.out && !l.inn && l.v > 1) durs.push(l.dur);
+  durs.sort((a, b) => a - b);
+  S.typical = durs.length ? durs[durs.length >> 1] : 95;
+
+  S.outline = D.track.x.map((x, i) => [x, D.track.y[i]]);
+  if (!S.outline.length){
+    // no outline in the file: trace the winner's car instead
+    const w = S.results.find(r => r.pos === 1);
+    const X = w && S.X[w.n], Y = w && S.Y[w.n];
+    if (X){ for (let i = 0; i < X.length; i += 2) if (!isNaN(X[i])) S.outline.push([X[i], Y[i]]); }
+  }
+  S.rot = 0;
+  S.selected = null; S.order = []; S.rcShown = -1; S.evIdx = -1; S.momentsShown = -2; S.seeked = true;
+
+  computePeriods();
+  computeRetirements();
+  buildEvents();
+  buildTower();
+  renderResults();
+  buildMarks();
+  fitMap();
+  S.t = Math.max(S.t0, S.raceStart - 30000);
+  S.loaded = true;
+  updateUI();
+}
+
+/* ---------- flags, retirements, key moments ---------- */
+function computePeriods(){
+  const out = []; let cur = null; S.chequered = null;
+  const start = (kind, t) => { if (cur && cur.kind === kind) return; if (cur){ cur.b = t; out.push(cur); } cur = { kind, a: t, b: Infinity }; };
+  const end = t => { if (cur){ cur.b = t; out.push(cur); cur = null; } };
+  for (const m of S.rc){
+    const msg = m.message.toUpperCase();
+    if (m.category === 'Flag' && m.scope === 'Track'){
+      if (m.flag === 'RED') start('red', m.t);
+      else if (m.flag === 'GREEN' || m.flag === 'CLEAR') end(m.t);
+      else if (m.flag === 'CHEQUERED'){ end(m.t); if (!S.chequered) S.chequered = m.t; }
+    } else if (m.category === 'SafetyCar'){
+      if (msg.includes('DEPLOYED')) start(msg.includes('VIRTUAL') ? 'vsc' : 'sc', m.t);
+      else if (msg.includes('VIRTUAL SAFETY CAR ENDING') || msg.includes('VSC ENDING')) end(m.t);
+    }
+  }
+  if (cur) out.push(cur);
+  S.periods = out;
+}
+function flagAt(t){
+  if (S.chequered && t >= S.chequered) return ['chq', 'Chequered flag'];
+  for (const p of S.periods) if (t >= p.a && t < p.b)
+    return p.kind === 'red' ? ['red', 'Red flag'] : p.kind === 'vsc' ? ['vsc', 'Virtual safety car'] : ['sc', 'Safety car'];
+  return null;
+}
+function computeRetirements(){
+  S.retired = {};
+  const typ = S.typical * 1000;
+  for (const r of S.results){
+    if (!['R', 'N', 'E'].includes(String(r.cls))) continue;
+    const laps = S.lapsBy[r.n] || [], last = laps[laps.length - 1];
+    const t = r.outT != null ? r.outT * 1000 : last ? last.t + (last.dur ? last.dur * 1000 : typ) : S.raceStart;
+    const status = (r.status || '').trim();
+    let how;
+    if (/accident|collision|crash|spun/i.test(status)) how = 'crashes out';
+    else if (status && !/^(retired|finished|\+|lapped|not classified|dnf)/i.test(status)) how = `retires (${status.toLowerCase()})`;
+    else {
+      const re = new RegExp('CAR ' + r.n + '\\b');
+      const m = S.rc.find(m => Math.abs(m.t - t) < 3 * typ && re.test(m.message) && /STOPPED/i.test(m.message));
+      how = m ? 'stopped on track' : 'retires';
+    }
+    S.retired[r.n] = { t, how };
+  }
+}
+const isOut = (n, t) => { const r = S.retired[n]; return !!r && t >= r.t; };
+function lapAt(t){
+  let v = 0;
+  for (const k in S.lapsBy){ const l = lastAt(S.lapsBy[k], t); if (l && l.v > v) v = l.v; }
+  if (!v && S.raceStart && t >= S.raceStart) v = 1;
+  return v;
+}
+function sentence(msg){
+  let x = msg.replace(/^FIA STEWARDS:\s*/i, '').toLowerCase();
+  x = x.charAt(0).toUpperCase() + x.slice(1);
+  return x.replace(/\(([a-z]{3})\)/g, (_, c) => '(' + c.toUpperCase() + ')');
+}
+function buildEvents(){
+  const ev = [];
+  const code = n => S.drivers.get(+n)?.code || ('#' + n);
+  if (S.raceStart) ev.push({ t: S.raceStart, k: 'flag', text: 'Lights out' });
+  for (const p of S.periods){
+    ev.push({ t: p.a, k: p.kind === 'red' ? 'red' : 'sc', text: p.kind === 'red' ? 'Red flag' : p.kind === 'vsc' ? 'Virtual safety car' : 'Safety car deployed' });
+    if (isFinite(p.b) && !S.periods.some(q => q.a === p.b) && p.b !== S.chequered)
+      ev.push({ t: p.b, k: 'green', text: p.kind === 'red' ? 'Race resumes' : 'Green flag, racing resumes' });
+  }
+  // lead changes
+  const p1 = [];
+  for (const k in S.posBy) for (const r of S.posBy[k]) if (r.v === 1) p1.push({ t: r.t, n: +k });
+  p1.sort((a, b) => a.t - b.t);
+  let cur = null;
+  for (const r of p1){
+    if (r.n === cur) continue;
+    if (cur !== null && r.t > S.raceStart + 20000 && !(S.chequered && r.t > S.chequered))
+      ev.push({ t: r.t, k: 'lead', text: `${code(r.n)} takes the lead` });
+    cur = r.n;
+  }
+  // pit stops by cars running in the top 3
+  for (const p of S.pits){
+    const pos = lastAt(S.posBy[p.n], p.t - 2000)?.v;
+    if (!pos || pos > 3) continue;
+    const d = typeof p.dur === 'number' ? ` (${p.dur.toFixed(1)} s in the pits)` : '';
+    ev.push({ t: p.t, k: 'pit', text: pos === 1 ? `Leader ${code(p.n)} pits${d}` : `${code(p.n)} pits from P${pos}${d}` });
+  }
+  for (const n in S.retired) ev.push({ t: S.retired[n].t, k: 'out', text: `${code(n)} ${S.retired[n].how}` });
+  for (const m of S.rc){
+    const u = m.message.toUpperCase();
+    if (/(TIME PENALTY|DRIVE THROUGH|STOP AND GO|STOP\/GO)/.test(u) && !/(NO FURTHER|INVESTIGAT|SERVED|NOTED|REVIEWED)/.test(u))
+      ev.push({ t: m.t, k: 'penalty', text: sentence(m.message) });
+  }
+  // fastest lap progression, from lap 6 on
+  const all = [];
+  for (const k in S.lapsBy) for (const l of S.lapsBy[k]) if (l.dur && !l.out && !l.inn && l.v > 1) all.push({ end: l.t + l.dur * 1000, dur: l.dur, n: k, v: l.v });
+  all.sort((a, b) => a.end - b.end);
+  let best = Infinity;
+  for (const l of all){
+    if (l.dur >= best) continue;
+    best = l.dur;
+    if (l.v >= 6) ev.push({ t: l.end, k: 'fastest', text: `${code(l.n)} sets the fastest lap, ${fmtDur(l.dur)}` });
+  }
+  if (S.chequered){
+    const w = S.results.find(r => r.pos === 1);
+    ev.push({ t: S.chequered, k: 'flag', text: w ? `Chequered flag, ${code(w.n)} wins` : 'Chequered flag' });
+  }
+  ev.sort((a, b) => a.t - b.t);
+  for (const e of ev) e.lap = lapAt(e.t);
+  S.events = ev;
+}
+
+/* ---------- map ---------- */
+const canvas = $('map'), ctx = canvas.getContext('2d');
+function rot(x, y, r = S.rot){ const X = x, Y = -y; return r === 1 ? [-Y, X] : r === 2 ? [-X, -Y] : r === 3 ? [Y, -X] : [X, Y]; }
+function fitMap(){
+  if (!S.outline.length){ S.fit = null; return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of S.outline){ const [a, b] = rot(p[0], p[1]); minX = Math.min(minX, a); maxX = Math.max(maxX, a); minY = Math.min(minY, b); maxY = Math.max(maxY, b); }
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  const pad = Math.max(24, Math.min(W, H) * 0.07), top = pad + (W > 600 ? 40 : 110);
+  const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
+  const s = Math.min((W - 2 * pad) / w, (H - pad - top) / h);
+  S.fit = { s, ox: pad + ((W - 2 * pad) - w * s) / 2 - minX * s, oy: top + ((H - pad - top) - h * s) / 2 - minY * s };
+}
+function P(x, y){ const [a, b] = rot(x, y); return [a * S.fit.s + S.fit.ox, b * S.fit.s + S.fit.oy]; }
+function resize(){
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(canvas.clientWidth * dpr); canvas.height = Math.round(canvas.clientHeight * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  fitMap();
+}
+new ResizeObserver(resize).observe($('stage'));
+
+function sampleAt(n, t){
+  const X = S.X[n], Y = S.Y[n]; if (!X) return null;
+  const f = (t - S.frame0) / 1000 * S.hz, i = Math.floor(f);
+  if (i < 0 || i >= S.frames || isNaN(X[i])) return null;
+  if (i + 1 >= S.frames || isNaN(X[i + 1])) return [X[i], Y[i]];
+  const a = f - i;
+  return [X[i] + (X[i + 1] - X[i]) * a, Y[i] + (Y[i + 1] - Y[i]) * a];
+}
+function draw(){
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  ctx.clearRect(0, 0, W, H);
+  if (!S.fit) return;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  S.outline.forEach((p, i) => { const [x, y] = P(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.closePath();
+  ctx.strokeStyle = COL.kerb; ctx.lineWidth = 17; ctx.stroke();
+  ctx.strokeStyle = COL.tarmac; ctx.lineWidth = 10; ctx.stroke();
+  const [sx, sy] = P(...S.outline[0]), [nx, ny] = P(...S.outline[Math.min(4, S.outline.length - 1)]);
+  const len = Math.hypot(nx - sx, ny - sy) || 1, px = -(ny - sy) / len, py = (nx - sx) / len;
+  ctx.beginPath(); ctx.moveTo(sx - px * 10, sy - py * 10); ctx.lineTo(sx + px * 10, sy + py * 10);
+  ctx.strokeStyle = COL.text; ctx.lineWidth = 3; ctx.lineCap = 'butt'; ctx.stroke(); ctx.lineCap = 'round';
+
+  ctx.font = '700 12px "Barlow Condensed", "Arial Narrow", sans-serif';
+  const order = S.order.length ? S.order : [...S.drivers.keys()];
+  for (let i = order.length - 1; i >= 0; i--){
+    const n = order[i], d = S.drivers.get(n); if (!d) continue;
+    const pt = sampleAt(n, S.t); if (!pt) continue;
+    let fade = 1, gone = false;
+    const ret = S.retired[n];
+    if (ret && S.t >= ret.t){ fade = 1 - (S.t - ret.t) / (2 * S.typical * 1000); if (fade <= 0) continue; fade *= 0.6; gone = true; }
+    const [x, y] = P(pt[0], pt[1]);
+    const sel = S.selected === n;
+    ctx.globalAlpha = fade * (S.selected != null && !sel ? 0.5 : 1);
+    ctx.beginPath(); ctx.arc(x, y, sel ? 9 : 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = d.color; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = sel ? COL.text : COL.bg; ctx.stroke();
+    if (!gone || sel){
+      ctx.lineWidth = 3; ctx.strokeStyle = COL.bg; ctx.strokeText(d.code, x + 11, y + 4);
+      ctx.fillStyle = COL.text; ctx.fillText(d.code, x + 11, y + 4);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- timing tower ---------- */
+function buildTower(){
+  const tower = $('tower'); tower.innerHTML = ''; S.rows = new Map();
+  if (!S.drivers.size){ tower.innerHTML = '<p class="empty">No driver data in this file.</p>'; return; }
+  for (const d of S.drivers.values()){
+    const el = document.createElement('button'); el.className = 'row'; el.type = 'button';
+    el.innerHTML = '<span class="pos"></span><span class="sw"></span><span class="code"></span><span class="team"></span><span class="tyre"></span><span class="gap"></span>';
+    el.querySelector('.sw').style.background = d.color;
+    el.querySelector('.code').textContent = d.code;
+    el.querySelector('.team').textContent = d.team;
+    el.title = d.name;
+    el.onclick = () => { S.selected = S.selected === d.n ? null : d.n; for (const [n, r] of S.rows) r.el.classList.toggle('sel', n === S.selected); };
+    tower.appendChild(el);
+    S.rows.set(d.n, { el, pos: el.querySelector('.pos'), tyre: el.querySelector('.tyre'), gap: el.querySelector('.gap') });
+  }
+  tower.style.height = S.drivers.size * ROW_H + 'px';
+}
+function updateUI(){
+  if (!S.loaded) return;
+  const t = S.t;
+  const arr = [...S.drivers.values()].map(d => { const p = lastAt(S.posBy[d.n], t); return { d, p: p ? p.v : 99, out: isOut(d.n, t) }; });
+  arr.sort((a, b) => (a.out - b.out) || (a.out ? S.retired[b.d.n].t - S.retired[a.d.n].t : 0) || a.p - b.p || a.d.n - b.d.n);
+  S.order = arr.map(o => o.d.n);
+  arr.forEach((o, i) => {
+    const r = S.rows.get(o.d.n); if (!r) return;
+    r.el.style.transform = `translateY(${i * ROW_H}px)`;
+    r.el.classList.toggle('out', o.out);
+    r.pos.textContent = o.out || o.p === 99 ? '–' : o.p;
+    if (o.out) r.gap.textContent = 'OUT';
+    else if (i === 0) r.gap.textContent = 'Leader';
+    else { const iv = lastAt(S.intBy[o.d.n], t); r.gap.textContent = iv ? fmtGap(iv.int ?? iv.gap) : ''; }
+    const lap = lastAt(S.lapsBy[o.d.n], t);
+    const ty = lap && TYRE[lap.cmp];
+    r.tyre.textContent = ty ? ty[0] : ''; r.tyre.style.setProperty('--c', ty ? ty[1] : 'transparent');
+    r.tyre.title = ty ? lap.cmp.toLowerCase() + ' tyres' : '';
+  });
+
+  const lead = S.order[0];
+  let lap = lead != null ? lastAt(S.lapsBy[lead], t)?.v : null;
+  if (!lap && S.raceStart && t >= S.raceStart) lap = 1;
+  $('hudBig').innerHTML = lap ? `<small>Lap </small>${lap}${S.totalLaps ? `<small> / ${S.totalLaps}</small>` : ''}` : '<small>Before the start</small>';
+  const f = flagAt(t), flagEl = $('flag');
+  if (f){ flagEl.hidden = false; flagEl.dataset.k = f[0]; flagEl.textContent = f[1]; } else flagEl.hidden = true;
+
+  $('clock').textContent = fmtClock(t - S.raceStart);
+  $('status').textContent = `${S.speed}× replay`;
+  const slider = $('slider');
+  slider.max = String((S.t1 - S.t0) / 1000);
+  if (!dragging) slider.value = String((t - S.t0) / 1000);
+  renderRC();
+  renderMoments();
+}
+
+/* ---------- side panels ---------- */
+function renderRC(){
+  const n = bsLast(S.rc, S.t, m => m.t) + 1;
+  if (n === S.rcShown) return;
+  S.rcShown = n;
+  const list = $('rcList'); list.innerHTML = '';
+  if (!n){ list.innerHTML = '<li><span></span><span class="empty" style="padding:0">No messages yet at this point in the race.</span></li>'; return; }
+  const colors = { RED: COL.red, YELLOW: COL.flag, 'DOUBLE YELLOW': COL.flag, GREEN: '#3DBE7A', CLEAR: '#3DBE7A', BLUE: '#5B8DEF', CHEQUERED: COL.text, 'BLACK AND WHITE': COL.text };
+  for (const m of S.rc.slice(Math.max(0, n - 40), n).reverse()){
+    const li = document.createElement('li');
+    const when = document.createElement('span'); when.className = 'when';
+    when.textContent = m.lap ? 'L' + m.lap : fmtClock(m.t - S.raceStart);
+    const body = document.createElement('span');
+    const col = colors[m.flag] || (m.category === 'SafetyCar' ? COL.flag : null);
+    if (col){ const chip = document.createElement('span'); chip.className = 'chip'; chip.style.background = col; body.appendChild(chip); }
+    body.appendChild(document.createTextNode(m.message));
+    li.append(when, body); list.appendChild(li);
+  }
+}
+let toastTimer = null;
+function renderMoments(){
+  const idx = bsLast(S.events, S.t, e => e.t);
+  if (!S.seeked && idx > S.evIdx && idx - S.evIdx <= 3 && S.events[idx]) showToast(S.events[idx]);
+  S.evIdx = idx; S.seeked = false;
+  if (idx === S.momentsShown) return;
+  S.momentsShown = idx;
+  const list = $('momentsList'); list.innerHTML = '';
+  if (!S.events.length){ list.innerHTML = '<li><p class="empty">No key moments found for this race.</p></li>'; return; }
+  S.events.forEach((e, i) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.type = 'button';
+    if (i > idx) b.className = 'later'; else if (i === idx) b.className = 'now';
+    b.style.setProperty('--c', EV_COLOR[e.k]);
+    b.innerHTML = '<span class="bar"></span><span class="when"></span><span class="txt"></span>';
+    b.querySelector('.when').textContent = e.lap ? 'L' + e.lap : '';
+    b.querySelector('.txt').textContent = e.text;
+    b.onclick = () => seekTo(e.t - 5000);
+    li.appendChild(b); list.appendChild(li);
+  });
+}
+function showToast(e){
+  const el = $('toast');
+  el.style.setProperty('--c', EV_COLOR[e.k]);
+  $('toastLap').textContent = e.lap ? 'Lap ' + e.lap : '';
+  $('toastText').textContent = e.text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.hidden = true, 4500);
+}
+function renderResults(){
+  const pane = $('resultsPane'); pane.innerHTML = '';
+  const rows = S.results.slice().sort((a, b) => (a.pos ?? 999) - (b.pos ?? 999));
+  if (!rows.length){ pane.innerHTML = '<p class="empty">No classification in this file.</p>'; return; }
+  const hasPts = rows.some(r => r.pts != null);
+  const table = document.createElement('table');
+  table.innerHTML = `<thead><tr><th class="n">Pos</th><th>Driver</th><th class="n">Laps</th><th class="n">Time</th>${hasPts ? '<th class="n">Pts</th>' : ''}</tr></thead>`;
+  const tb = document.createElement('tbody');
+  for (const r of rows){
+    const d = S.drivers.get(r.n) || { code: String(r.n), team: '', color: '#9AA6BA' };
+    const cls = String(r.cls ?? '');
+    const pos = /^\d+$/.test(cls) ? cls : (CLS[cls] || r.pos || '–');
+    let time = '';
+    if (/^\d+$/.test(cls)){
+      if (r.pos === 1) time = fmtDur(r.time);
+      else if (r.time != null) time = '+' + r.time.toFixed(3);
+      else time = r.status || '';
+    } else time = r.status || '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="n"></td><td><div class="drv"><span></span><div><b></b><small></small></div></div></td><td class="n"></td><td class="n"></td>${hasPts ? '<td class="n"></td>' : ''}`;
+    const tds = tr.querySelectorAll('td');
+    tds[0].textContent = pos;
+    tr.querySelector('.drv > span').style.background = d.color;
+    tr.querySelector('.drv b').textContent = d.code;
+    tr.querySelector('.drv small').textContent = d.team;
+    tds[2].textContent = r.laps || '';
+    tds[3].textContent = time;
+    if (hasPts) tds[4].textContent = r.pts ?? '';
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb); pane.appendChild(table);
+}
+
+/* ---------- timeline ---------- */
+function buildMarks(){
+  const marks = $('marks'); marks.innerHTML = '';
+  const span = S.t1 - S.t0; if (!(span > 0)) return;
+  const pct = t => ((t - S.t0) / span * 100).toFixed(3) + '%';
+  for (const p of S.periods){
+    const a = Math.max(p.a, S.t0), b = Math.min(p.b, S.t1); if (b <= a) continue;
+    const el = document.createElement('div'); el.className = 'band';
+    el.style.left = pct(a); el.style.width = ((b - a) / span * 100).toFixed(3) + '%';
+    el.style.background = p.kind === 'red' ? COL.red : COL.flag;
+    marks.appendChild(el);
+  }
+  for (const e of S.events){
+    if (e.k === 'green' || e.t < S.t0 || e.t > S.t1) continue;
+    const b = document.createElement('button'); b.className = 'pin'; b.type = 'button';
+    b.dataset.k = e.k; b.style.left = pct(e.t); b.style.setProperty('--c', EV_COLOR[e.k]);
+    b.title = (e.lap ? 'Lap ' + e.lap + ': ' : '') + e.text; b.setAttribute('aria-label', b.title);
+    b.innerHTML = '<i></i>';
+    b.onclick = () => seekTo(e.t - 5000);
+    marks.appendChild(b);
+  }
+  let most = [];
+  for (const k in S.lapsBy) if (S.lapsBy[k].length > most.length) most = S.lapsBy[k];
+  for (const l of most){
+    if (l.v % 5 || l.t > S.t1) continue;
+    const el = document.createElement('div'); el.className = 'tick'; el.style.left = pct(l.t);
+    if (l.v % 10 === 0) el.innerHTML = `<em>${l.v}</em>`;
+    marks.appendChild(el);
+  }
+}
+function seekTo(t){
+  if (!S.loaded) return;
+  S.t = Math.min(S.t1, Math.max(S.t0, t)); S.seeked = true;
+  $('toast').hidden = true; updateUI();
+}
+let dragging = false;
+const slider = $('slider');
+slider.addEventListener('pointerdown', () => dragging = true);
+window.addEventListener('pointerup', () => dragging = false);
+window.addEventListener('pointercancel', () => dragging = false);
+slider.addEventListener('input', () => seekTo(S.t0 + (+slider.value) * 1000));
+
+const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.5" y="4.5" width="4.5" height="15" rx="1"/><rect x="14" y="4.5" width="4.5" height="15" rx="1"/></svg>';
+function setPlaying(on){
+  S.playing = on;
+  $('playBtn').innerHTML = on ? PAUSE_ICON : PLAY_ICON;
+  $('playBtn').setAttribute('aria-label', on ? 'Pause' : 'Play');
+}
+$('playBtn').onclick = () => {
+  if (!S.loaded) return;
+  if (!S.playing && S.t >= S.t1 - 1000) seekTo(S.raceStart - 30000);
+  setPlaying(!S.playing);
+};
+$('speedSel').onchange = e => { S.speed = +e.target.value; updateUI(); };
+$('rotateBtn').onclick = () => { S.rot = (S.rot + 1) % 4; fitMap(); };
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => { x.setAttribute('aria-selected', String(x === b)); $(x.dataset.pane).hidden = x !== b; });
+});
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input, select, textarea')) return;
+  if (e.code === 'Space' && !e.target.closest('button')){ e.preventDefault(); $('playBtn').click(); }
+  if (e.code === 'ArrowRight' || e.code === 'ArrowLeft'){
+    const step = (e.shiftKey ? 60000 : 10000) * (e.code === 'ArrowRight' ? 1 : -1);
+    seekTo(S.t + step);
+  }
+});
+
+/* ---------- main loop ---------- */
+let lastFrame = performance.now(), lastUI = 0;
+function frame(now){
+  const dt = Math.min(100, now - lastFrame); lastFrame = now;
+  if (S.loaded){
+    if (S.playing){
+      S.t += dt * S.speed;
+      if (S.t >= S.t1){ S.t = S.t1; setPlaying(false); }
+    }
+    draw();
+    if (now - lastUI > 200){ updateUI(); lastUI = now; }
+  }
+  requestAnimationFrame(frame);
+}
+
+setPlaying(false);
+init();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
