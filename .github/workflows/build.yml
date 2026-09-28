@@ -16,6 +16,11 @@ on:
         description: "Rebuild races that already exist"
         type: boolean
         default: false
+      telemetry:
+        description: "Car telemetry for which seasons (it doubles the data size)"
+        type: choice
+        options: [recent, all, none]
+        default: recent
 
 permissions:
   contents: write
@@ -44,6 +49,7 @@ jobs:
         env:
           YEARS: ${{ inputs.years }}
           BUDGET_MIN: "300"
+          TELEMETRY: ${{ inputs.telemetry || 'recent' }}
         run: python build_races.py ${{ inputs.force && '--force' || '' }}
 
       - name: Save new race files to the repository
