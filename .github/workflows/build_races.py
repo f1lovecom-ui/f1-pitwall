@@ -45,6 +45,10 @@ class ApiError(Exception):
     pass
 
 
+class NoData(Exception):
+    """The session is on the calendar but has no data (for example, it was cancelled)."""
+
+
 class OpenF1:
     """Polite client: stays under ~3 requests/second and 25/minute, retries on errors."""
 
@@ -166,10 +170,10 @@ def build_session(api, sess, meeting, rnd):
     rel = lambda s: (parse_dt(s) - t0).total_seconds() if s else None
     k = f"session_key={sk}"
 
-    drivers_raw = api.get("drivers", k)
     laps_raw = api.get("laps", k)
     if not laps_raw:
-        raise ApiError("no lap data")
+        raise NoData()
+    drivers_raw = api.get("drivers", k)
     position = api.get("position", k)
     intervals = api.get("intervals", k)
     pits_raw = api.get("pit", k)
@@ -358,6 +362,41 @@ def build_session(api, sess, meeting, rnd):
     }
 
 
+def official_rounds(year):
+    """Race date -> official round number, from Jolpica/Ergast (cancelled races aren't listed there)."""
+    try:
+        r = requests.get(f"https://api.jolpi.ca/ergast/f1/{year}.json?limit=100", headers=UA, timeout=30)
+        races = r.json()["MRData"]["RaceTable"]["Races"] if r.ok else []
+        return {x["date"]: int(x["round"]) for x in races}
+    except Exception:
+        return {}
+
+
+def round_for(meeting, race_sessions, official):
+    """Match a meeting to its official round by its race date (allowing a day either side)."""
+    if not official:
+        return None
+    for s in race_sessions:
+        d = parse_dt(s["date_start"]).date()
+        for off in (0, -1, 1):
+            key = (d + timedelta(days=off)).isoformat()
+            if key in official:
+                return official[key]
+    return None
+
+
+def existing_files(year):
+    """(event name, session) -> path, for race files already built this season."""
+    found = {}
+    for f in (OUT / str(year)).glob("*.json"):
+        try:
+            meta = json.loads(f.read_text())["meta"]
+            found[(meta["event"], meta["session"])] = f
+        except Exception:
+            pass
+    return found
+
+
 def write_index():
     events = {}
     for f in sorted(OUT.glob("*/*.json")):
@@ -399,7 +438,7 @@ def main():
 
     api = OpenF1()
     deadline = time.time() + args.budget_min * 60
-    built = failed = 0
+    built = failed = nodata = 0
     first_error = None
     stop = False
 
@@ -413,8 +452,17 @@ def main():
             log(f"{year}: couldn't load the calendar: {e}")
             continue
         races = [m for m in meetings if "test" not in (m.get("meeting_name") or "").lower()]
-        rounds = {m["meeting_key"]: i + 1 for i, m in enumerate(races)}
         by_key = {m["meeting_key"]: m for m in races}
+        # Official round numbers, so cancelled races don't shift the numbering
+        official = official_rounds(year)
+        rounds = {}
+        for i, m in enumerate(races):
+            rs = [s for s in sessions if s.get("meeting_key") == m["meeting_key"] and s.get("session_name") == "Race"]
+            rnd = round_for(m, rs, official)
+            if official and rnd is None:
+                continue  # not on the official calendar any more (cancelled)
+            rounds[m["meeting_key"]] = rnd or i + 1
+        have = existing_files(year)
         for sess in sorted(sessions, key=lambda s: s["date_start"]):
             mk, name = sess.get("meeting_key"), sess.get("session_name")
             if mk not in rounds or name not in SESSION_ORDER:
@@ -424,6 +472,14 @@ def main():
                 continue  # not finished yet
             rnd = rounds[mk]
             path = OUT / str(year) / f"{rnd:02d}_{name.lower()}.json"
+            # A file built earlier under a different round number: move it to the right name
+            old = have.get((by_key[mk].get("meeting_name"), name))
+            if old and old != path and not path.exists():
+                data = json.loads(old.read_text())
+                data["meta"]["round"] = rnd
+                path.write_text(json.dumps(data, separators=(",", ":")))
+                old.unlink()
+                log(f"Renumbered {old.name} -> {path.name}")
             if path.exists() and not args.force:
                 continue
             if time.time() > deadline:
@@ -438,6 +494,9 @@ def main():
                 path.write_text(json.dumps(data, separators=(",", ":")))
                 built += 1
                 log(f"  wrote {path} ({path.stat().st_size / 1e6:.1f} MB, {time.time() - started:.0f} s)")
+            except NoData:
+                nodata += 1
+                log("  no data for this session (it may have been cancelled), skipping")
             except Exception as e:
                 failed += 1
                 log(f"  failed: {type(e).__name__}: {e}")
@@ -445,7 +504,7 @@ def main():
                     first_error = traceback.format_exc()
                     log(first_error)
 
-    log(f"Done: {built} built, {failed} failed.")
+    log(f"Done: {built} built, {failed} failed, {nodata} without data.")
     if failed and not built:
         log("Every race failed to build, so nothing will be published. See the first error above.")
         sys.exit(1)
