@@ -50,7 +50,7 @@ jobs:
           YEARS: ${{ inputs.years }}
           BUDGET_MIN: "300"
           TELEMETRY: ${{ inputs.telemetry || 'recent' }}
-        run: python build_races.py ${{ inputs.force && '--force' || '' }}
+        run: python pitwall_build.py ${{ inputs.force && '--force' || '' }}
 
       - name: Save new race files to the repository
         run: |
