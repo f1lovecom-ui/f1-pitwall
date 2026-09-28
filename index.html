@@ -66,7 +66,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:m
 .empty{color:var(--muted);padding:18px 16px;margin:0}
 
 .tower{position:relative}
-.row{position:absolute;left:0;right:0;top:0;height:36px;display:grid;grid-template-columns:26px 4px 42px minmax(0,1fr) 24px 78px;align-items:center;gap:8px;padding:0 12px;background:none;border:0;text-align:left;cursor:pointer;transition:transform .45s ease}
+.towerhead,.row{grid-template-columns:26px 4px 42px minmax(0,1fr) 30px 30px 74px}
+.towerhead{display:grid;gap:8px;padding:7px 12px;position:sticky;top:0;z-index:1;background:var(--panel);border-bottom:1px solid var(--line);font:600 12px var(--cond);color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+.h-pos{grid-column:1;text-align:right}.h-drv{grid-column:3/5}.h-tyre{grid-column:5;text-align:center}.h-pits{grid-column:6;text-align:center}.h-gap{grid-column:7;text-align:right}
+.row{position:absolute;left:0;right:0;top:0;height:36px;display:grid;align-items:center;gap:8px;padding:0 12px;background:none;border:0;text-align:left;cursor:pointer;transition:transform .45s ease}
 .row:hover{background:rgba(255,255,255,.03)}
 .row.sel{background:var(--panel2)}
 .row.out{opacity:.4}
@@ -75,7 +78,38 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:m
 .row .sw{height:20px;border-radius:2px}
 .row .code{font:700 17px var(--cond)}
 .row .team{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .tyre{width:22px;height:22px;border-radius:50%;border:3px solid var(--c,transparent);display:grid;place-items:center;font:700 11px/1 var(--cond)}
+.row .tyre{width:22px;height:22px;display:grid;place-items:center}
+.row .pits{text-align:center;font:600 15px var(--cond);color:var(--muted);font-variant-numeric:tabular-nums}
+.tyreico{display:block;flex:none}
+
+/* view switch + strategy view */
+.viewtabs{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:3px}
+.viewtabs button{border:0;background:none;color:var(--muted);padding:5px 12px;border-radius:5px;font:600 15px var(--cond);cursor:pointer}
+.viewtabs button[aria-selected=true]{background:var(--panel2);color:var(--text)}
+.strat{position:absolute;inset:0;overflow:auto;padding:18px 18px 24px;background:var(--bg)}
+.strat[hidden]{display:none}
+.strat-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 20px;margin:0 0 16px;padding-right:250px}
+.strat-head h2{font:700 26px/1 var(--cond);margin:0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:6px}
+.strat-body{--lw:156px;position:relative;min-width:560px}
+.saxis{position:relative;height:22px;margin-left:var(--lw)}
+.saxis em{position:absolute;top:0;transform:translateX(-50%);font:600 12px var(--cond);color:var(--muted);font-style:normal;white-space:nowrap}
+.srow{display:grid;grid-template-columns:var(--lw) minmax(0,1fr);align-items:center;height:32px}
+.srow:nth-child(even){background:rgba(255,255,255,.018)}
+.slabel{display:flex;align-items:center;gap:7px;min-width:0;padding-right:10px}
+.slabel .p{width:30px;text-align:right;font:700 15px var(--cond);color:var(--muted);flex:none}
+.slabel .sw{width:3px;height:18px;border-radius:2px;flex:none}
+.slabel b{font:700 16px var(--cond)}
+.slabel small{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}
+.strack{position:relative;height:24px}
+.stint{position:absolute;top:0;height:24px;border-radius:12px;display:flex;align-items:center;gap:6px;padding:0 9px 0 3px;overflow:hidden;white-space:nowrap;font:700 13px var(--cond);color:#11151c;border:0;cursor:pointer;background:var(--c)}
+.stint:hover,.stint:focus-visible{filter:brightness(1.12)}
+.stint.used .tyreico{opacity:.7}
+.sdnf{position:absolute;top:4px;padding-left:7px;font:700 13px var(--cond);color:var(--red)}
+.snow-layer{position:absolute;top:22px;bottom:0;left:var(--lw);right:0;pointer-events:none}
+.sfuture{position:absolute;top:0;bottom:0;right:0;background:rgba(27,34,48,.5)}
+.snow{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--flag)}
 .row .gap{text-align:right;font:600 15px var(--cond);font-variant-numeric:tabular-nums;color:var(--muted)}
 
 table{width:100%;border-collapse:collapse;font-size:14px}
@@ -118,14 +152,22 @@ td .drv small{display:block;color:var(--muted);font-size:12px}
   .app{height:auto;min-height:100dvh}
   header{display:grid;grid-template-columns:auto 1fr;gap:10px;padding:10px 12px}
   .updated{justify-self:end}
-  .pickers{grid-column:1/-1;display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px}
-  #raceSel{grid-column:1/-1;max-width:none}
-  select{width:100%;font-size:16px;min-height:42px}
+  .pickers{grid-column:1/-1;display:grid;grid-template-columns:96px minmax(0,1fr);grid-template-areas:"race race" "year session";gap:8px}
+  #raceSel{grid-area:race;max-width:none}
+  #yearSel{grid-area:year}
+  #sessionSel{grid-area:session}
+  .pickers select{width:100%}
+  select{font-size:16px;min-height:42px}
   main{grid-template-columns:minmax(0,1fr);grid-template-rows:58vh auto auto;grid-template-areas:"stage" "time" "side"}
   .side{border-left:0;border-top:1px solid var(--line)}
   .pane{overflow:visible}
   .big{font-size:46px}
-  .row{grid-template-columns:26px 4px minmax(0,1fr) 24px 78px}
+  .towerhead,.row{grid-template-columns:26px 4px minmax(0,1fr) 30px 30px 74px}
+  .h-drv{grid-column:3}.h-tyre{grid-column:4}.h-pits{grid-column:5}.h-gap{grid-column:6}
+  .strat{padding-top:64px}
+  .strat-head{padding-right:0}
+  .strat-body{--lw:104px;min-width:480px}
+  .slabel small{display:none}
   .row .team{display:none}
   .tabs button{font-size:15px;padding:11px 4px}
   .timeline{flex-wrap:wrap;padding-top:6px}
@@ -156,7 +198,17 @@ td .drv small{display:block;color:var(--muted);font-size:12px}
         <div class="big" id="hudBig"></div>
         <span class="flag" id="flag" hidden></span>
       </div>
-      <div class="maptools"><button class="btn" id="rotateBtn" title="Rotate map">Rotate</button></div>
+      <div class="strat" id="strat" hidden>
+        <div class="strat-head"><h2>Tyre strategy</h2><div class="legend" id="stratLegend"></div></div>
+        <div class="strat-body" id="stratBody"></div>
+      </div>
+      <div class="maptools">
+        <button class="btn" id="rotateBtn" title="Rotate map">Rotate</button>
+        <div class="viewtabs" role="tablist" aria-label="Main view">
+          <button role="tab" data-view="track" aria-selected="true">Track</button>
+          <button role="tab" data-view="strategy" aria-selected="false">Strategy</button>
+        </div>
+      </div>
       <div class="toast" id="toast" hidden role="status" aria-live="polite"><b id="toastLap"></b><span id="toastText"></span></div>
       <div class="msg" id="msg" role="status" aria-live="polite" hidden>
         <div class="box"><p id="msgText"></p><div class="acts" id="msgActs"></div></div>
@@ -170,7 +222,7 @@ td .drv small{display:block;color:var(--muted);font-size:12px}
         <button role="tab" data-pane="resultsPane" aria-selected="false">Results</button>
         <button role="tab" data-pane="rcPane" aria-selected="false">Race control</button>
       </div>
-      <div class="pane" id="towerPane"><div class="tower" id="tower"></div></div>
+      <div class="pane" id="towerPane"><div class="towerhead" aria-hidden="true"><span class="h-pos">Pos</span><span class="h-drv">Driver</span><span class="h-tyre">Tyre</span><span class="h-pits">Pits</span><span class="h-gap">Gap</span></div><div class="tower" id="tower"></div></div>
       <div class="pane" id="momentsPane" hidden><ul class="moments" id="momentsList"></ul></div>
       <div class="pane" id="resultsPane" hidden></div>
       <div class="pane" id="rcPane" hidden><ul class="rc" id="rcList"></ul></div>
@@ -249,11 +301,23 @@ function setMsg(text, actions = []){
   el.hidden = false;
 }
 
+/* ---------- tyre graphic ---------- */
+function tyreSVG(cmp, size = 22){
+  const c = TYRE[cmp], col = c ? c[1] : '#7C889C', letter = c ? c[0] : '?';
+  return `<svg class="tyreico" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">` +
+    `<circle cx="12" cy="12" r="11.6" fill="#0F1218"/>` +
+    `<circle cx="12" cy="12" r="10.4" fill="none" stroke="#2A303B" stroke-width="1.1" stroke-dasharray="1.3 1.6"/>` +
+    `<circle cx="12" cy="12" r="8.2" fill="none" stroke="${col}" stroke-width="2.3"/>` +
+    `<circle cx="12" cy="12" r="5.8" fill="#232833"/>` +
+    `<text x="12" y="12" dy=".36em" text-anchor="middle" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="700" font-size="8.5" fill="${col}">${letter}</text></svg>`;
+}
+const TYRE_NAME = { SOFT: 'Soft', MEDIUM: 'Medium', HARD: 'Hard', INTERMEDIATE: 'Intermediate', WET: 'Wet' };
+
 /* ---------- state ---------- */
 const S = {
   gen: 0, index: null, drivers: new Map(), rows: new Map(),
   X: {}, Y: {}, hz: 4, frame0: 0, frames: 0,
-  posBy: {}, intBy: {}, lapsBy: {}, rc: [], pits: [], results: [],
+  posBy: {}, intBy: {}, lapsBy: {}, rc: [], pits: [], results: [], stints: {}, pitsBy: {}, view: 'track',
   periods: [], chequered: null, isRace: true, raceStart: null, totalLaps: 0, typical: 95,
   t0: 0, t1: 0, t: 0, playing: false, speed: 10,
   outline: [], fit: null, rot: 0, selected: null, order: [], rcShown: -1,
@@ -370,6 +434,32 @@ function prepare(D){
   durs.sort((a, b) => a - b);
   S.typical = durs.length ? durs[durs.length >> 1] : 95;
 
+  // stints: from the file when it has them, otherwise worked out from each lap's compound
+  S.stints = {};
+  for (const n in S.lapsBy){
+    const laps = S.lapsBy[n], lastLap = laps.length ? laps[laps.length - 1].v : 0;
+    let list = [];
+    if (D.stints){
+      list = D.stints.filter(r => r[0] == n).map(r => ({ from: r[1] || 1, to: Math.min(r[2] || lastLap, lastLap), cmp: r[3], age: r[4] }))
+        .filter(s => s.from <= s.to).sort((a, b) => a.from - b.from);
+    }
+    if (!list.length){
+      let cur = null;
+      for (const l of laps){
+        if (!cur || (l.out && l.v > 1) || (l.cmp && cur.cmp && l.cmp !== cur.cmp)){ cur = { from: l.v, to: l.v, cmp: l.cmp || null, age: null }; list.push(cur); }
+        else { cur.to = l.v; if (!cur.cmp && l.cmp) cur.cmp = l.cmp; }
+      }
+    }
+    S.stints[n] = list;
+  }
+  // pit stop times per driver, for the running count in the tower
+  S.pitsBy = {};
+  if (S.pits.length) for (const p of S.pits) (S.pitsBy[p.n] ??= []).push(p.t);
+  else for (const n in S.stints) for (const s of S.stints[n].slice(1)){
+    const l = (S.lapsBy[n] || []).find(x => x.v === s.from); if (l) (S.pitsBy[n] ??= []).push(l.t);
+  }
+  for (const n in S.pitsBy) S.pitsBy[n].sort((a, b) => a - b);
+
   S.outline = D.track.x.map((x, i) => [x, D.track.y[i]]);
   if (!S.outline.length){
     // no outline in the file: trace the winner's car instead
@@ -385,6 +475,7 @@ function prepare(D){
   buildEvents();
   buildTower();
   renderResults();
+  buildStrategy();
   buildMarks();
   fitMap();
   S.t = Math.max(S.t0, S.raceStart - 30000);
@@ -573,14 +664,14 @@ function buildTower(){
   if (!S.drivers.size){ tower.innerHTML = '<p class="empty">No driver data in this file.</p>'; return; }
   for (const d of S.drivers.values()){
     const el = document.createElement('button'); el.className = 'row'; el.type = 'button';
-    el.innerHTML = '<span class="pos"></span><span class="sw"></span><span class="code"></span><span class="team"></span><span class="tyre"></span><span class="gap"></span>';
+    el.innerHTML = '<span class="pos"></span><span class="sw"></span><span class="code"></span><span class="team"></span><span class="tyre"></span><span class="pits"></span><span class="gap"></span>';
     el.querySelector('.sw').style.background = d.color;
     el.querySelector('.code').textContent = d.code;
     el.querySelector('.team').textContent = d.team;
     el.title = d.name;
     el.onclick = () => { S.selected = S.selected === d.n ? null : d.n; for (const [n, r] of S.rows) r.el.classList.toggle('sel', n === S.selected); };
     tower.appendChild(el);
-    S.rows.set(d.n, { el, pos: el.querySelector('.pos'), tyre: el.querySelector('.tyre'), gap: el.querySelector('.gap') });
+    S.rows.set(d.n, { el, pos: el.querySelector('.pos'), tyre: el.querySelector('.tyre'), pits: el.querySelector('.pits'), gap: el.querySelector('.gap'), cmp: undefined });
   }
   tower.style.height = S.drivers.size * ROW_H + 'px';
 }
@@ -600,8 +691,10 @@ function updateUI(){
     else { const iv = lastAt(S.intBy[o.d.n], t); r.gap.textContent = iv ? fmtGap(iv.int ?? iv.gap) : ''; }
     const lap = lastAt(S.lapsBy[o.d.n], t);
     const ty = lap && TYRE[lap.cmp];
-    r.tyre.textContent = ty ? ty[0] : ''; r.tyre.style.setProperty('--c', ty ? ty[1] : 'transparent');
-    r.tyre.title = ty ? lap.cmp.toLowerCase() + ' tyres' : '';
+    const cmp = ty ? lap.cmp : null;
+    if (r.cmp !== cmp){ r.cmp = cmp; r.tyre.innerHTML = cmp ? tyreSVG(cmp, 22) : ''; r.tyre.title = cmp ? TYRE_NAME[cmp] + ' tyres' : ''; }
+    const stops = bsLast(S.pitsBy[o.d.n] || [], t) + 1;
+    r.pits.textContent = stops; r.pits.title = stops === 1 ? '1 pit stop' : `${stops} pit stops`;
   });
 
   const lead = S.order[0];
@@ -618,6 +711,7 @@ function updateUI(){
   if (!dragging) slider.value = String((t - S.t0) / 1000);
   renderRC();
   renderMoments();
+  if (S.view === 'strategy') updateStrategyNow(lead);
 }
 
 /* ---------- side panels ---------- */
@@ -675,7 +769,7 @@ function renderResults(){
   if (!rows.length){ pane.innerHTML = '<p class="empty">No classification in this file.</p>'; return; }
   const hasPts = rows.some(r => r.pts != null);
   const table = document.createElement('table');
-  table.innerHTML = `<thead><tr><th class="n">Pos</th><th>Driver</th><th class="n">Laps</th><th class="n">Time</th>${hasPts ? '<th class="n">Pts</th>' : ''}</tr></thead>`;
+  table.innerHTML = `<thead><tr><th class="n">Pos</th><th>Driver</th><th class="n">Laps</th><th class="n">Stops</th><th class="n">Time</th>${hasPts ? '<th class="n">Pts</th>' : ''}</tr></thead>`;
   const tb = document.createElement('tbody');
   for (const r of rows){
     const d = S.drivers.get(r.n) || { code: String(r.n), team: '', color: '#9AA6BA' };
@@ -688,19 +782,99 @@ function renderResults(){
       else time = r.status || '';
     } else time = r.status || '';
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="n"></td><td><div class="drv"><span></span><div><b></b><small></small></div></div></td><td class="n"></td><td class="n"></td>${hasPts ? '<td class="n"></td>' : ''}`;
+    tr.innerHTML = `<td class="n"></td><td><div class="drv"><span></span><div><b></b><small></small></div></div></td><td class="n"></td><td class="n"></td><td class="n"></td>${hasPts ? '<td class="n"></td>' : ''}`;
     const tds = tr.querySelectorAll('td');
     tds[0].textContent = pos;
     tr.querySelector('.drv > span').style.background = d.color;
     tr.querySelector('.drv b').textContent = d.code;
     tr.querySelector('.drv small').textContent = d.team;
     tds[2].textContent = r.laps || '';
-    tds[3].textContent = time;
-    if (hasPts) tds[4].textContent = r.pts ?? '';
+    tds[3].textContent = (S.pitsBy[r.n] || []).length;
+    tds[4].textContent = time;
+    if (hasPts) tds[5].textContent = r.pts ?? '';
     tb.appendChild(tr);
   }
   table.appendChild(tb); pane.appendChild(table);
 }
+
+/* ---------- strategy view ---------- */
+function strategyOrder(){
+  const key = r => /^\d+$/.test(String(r.cls)) ? +r.cls : 1000 - (r.laps || 0);
+  const fromResults = S.results.slice().sort((a, b) => key(a) - key(b)).map(r => r.n).filter(n => S.drivers.has(n));
+  for (const n of S.drivers.keys()) if (!fromResults.includes(n)) fromResults.push(n);
+  return fromResults;
+}
+function buildStrategy(){
+  const body = $('stratBody'); body.innerHTML = '';
+  const total = S.totalLaps || 1;
+  const used = new Set();
+  for (const n in S.stints) for (const s of S.stints[n]) if (s.cmp) used.add(s.cmp);
+  $('stratLegend').innerHTML = Object.keys(TYRE).filter(c => used.has(c)).map(c => `<span>${tyreSVG(c, 18)}${TYRE_NAME[c]}</span>`).join('');
+  if (!Object.values(S.stints).some(l => l.length)){ body.innerHTML = '<p class="empty">No tyre data in this race file.</p>'; return; }
+
+  const pct = lap => (lap / total * 100).toFixed(3) + '%';
+  const axis = document.createElement('div'); axis.className = 'saxis';
+  const marks = [1]; for (let l = 10; l < total; l += 10) marks.push(l); marks.push(total);
+  axis.innerHTML = marks.map(l => `<em style="left:${pct(l - 0.5)}">${l === 1 ? 'Lap 1' : l}</em>`).join('');
+  body.appendChild(axis);
+
+  for (const n of strategyOrder()){
+    const d = S.drivers.get(n), list = S.stints[n] || [];
+    const res = S.results.find(r => r.n === n) || {};
+    const cls = String(res.cls ?? '');
+    const row = document.createElement('div'); row.className = 'srow';
+    const stops = Math.max(0, list.length - 1);
+    row.innerHTML = `<div class="slabel"><span class="p"></span><span class="sw"></span><b></b><small></small></div><div class="strack"></div>`;
+    row.querySelector('.p').textContent = /^\d+$/.test(cls) ? cls : (CLS[cls] || '');
+    row.querySelector('.sw').style.background = d.color;
+    row.querySelector('b').textContent = d.code;
+    row.querySelector('small').textContent = stops === 1 ? '1 stop' : `${stops} stops`;
+    const track = row.querySelector('.strack');
+    for (const s of list){
+      const laps = s.to - s.from + 1;
+      const b = document.createElement('button'); b.type = 'button';
+      b.className = 'stint' + (s.age > 0 ? ' used' : '');
+      b.style.left = `calc(${pct(s.from - 1)} + 1px)`;
+      b.style.width = `calc(${pct(laps)} - 3px)`;
+      b.style.setProperty('--c', TYRE[s.cmp] ? TYRE[s.cmp][1] : '#7C889C');
+      const name = TYRE_NAME[s.cmp] || 'Unknown compound';
+      const set = s.age == null ? '' : s.age > 0 ? `, used set (${s.age} laps old)` : ', new set';
+      b.title = `${d.code}: ${name}, laps ${s.from}–${s.to} (${laps} lap${laps === 1 ? '' : 's'})${set}`;
+      b.setAttribute('aria-label', b.title);
+      b.innerHTML = `${tyreSVG(s.cmp, 18)}<span>${laps} ${laps === 1 ? 'lap' : 'laps'}</span>`;
+      b.onclick = () => { const l = (S.lapsBy[n] || []).find(x => x.v === s.from); if (l) seekTo(l.t - 3000); };
+      track.appendChild(b);
+    }
+    if (['R', 'N', 'E'].includes(cls) && list.length){
+      const dnf = document.createElement('span'); dnf.className = 'sdnf';
+      dnf.style.left = pct(list[list.length - 1].to); dnf.textContent = CLS[cls];
+      track.appendChild(dnf);
+    }
+    body.appendChild(row);
+  }
+  const layer = document.createElement('div'); layer.className = 'snow-layer';
+  layer.innerHTML = '<div class="sfuture" id="sFuture"></div><div class="snow" id="sNow"></div>';
+  body.appendChild(layer);
+}
+function updateStrategyNow(lead){
+  const now = $('sNow'), fut = $('sFuture'); if (!now) return;
+  const total = S.totalLaps || 1;
+  let lapF = 0;
+  const l = lead != null ? lastAt(S.lapsBy[lead], S.t) : null;
+  if (l) lapF = (l.v - 1) + Math.min(1, Math.max(0, (S.t - l.t) / ((l.dur || S.typical) * 1000)));
+  if (S.chequered && S.t >= S.chequered) lapF = total;
+  const p = Math.min(100, lapF / total * 100);
+  now.style.left = p + '%'; fut.style.left = p + '%';
+  now.style.display = p <= 0 || p >= 100 ? 'none' : '';
+}
+function setView(v){
+  S.view = v;
+  document.querySelectorAll('.viewtabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === v)));
+  $('strat').hidden = v !== 'strategy';
+  $('rotateBtn').hidden = v !== 'track';
+  if (v === 'strategy') updateUI();
+}
+document.querySelectorAll('.viewtabs button').forEach(b => b.onclick = () => setView(b.dataset.view));
 
 /* ---------- timeline ---------- */
 function buildMarks(){
@@ -779,7 +953,7 @@ function frame(now){
       S.t += dt * S.speed;
       if (S.t >= S.t1){ S.t = S.t1; setPlaying(false); }
     }
-    draw();
+    if (S.view === 'track') draw();
     if (now - lastUI > 200){ updateUI(); lastUI = now; }
   }
   requestAnimationFrame(frame);
