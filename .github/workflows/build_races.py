@@ -6,14 +6,21 @@ Formula 1's own timing archive refuses requests from cloud machines like GitHub 
 so this reads the same data through OpenF1 instead (available from 2023 onwards).
 Retirement reasons (accident, engine, ...) come from the Jolpica/Ergast results API.
 
-For every finished Race and Sprint it writes one JSON file with car positions on a
-fixed 4 Hz grid, laps with tyre compounds, pit stops, race control messages, timing
-tower positions and gaps, and the classification. Existing files are skipped.
+For every finished Race, Sprint, Qualifying and Sprint Qualifying/Shootout it writes one
+JSON file with car positions on a fixed 4 Hz grid, laps with tyre compounds, pit stops,
+race control messages, timing tower positions and gaps, weather, team radio, the
+classification and (for races) championship standings. Car telemetry (speed, gear,
+throttle, brake, DRS) goes in one small file per driver next to it.
+
+Existing files are skipped; files from an older version of this script are upgraded
+by fetching only the missing parts.
 
 Usage:
   python build_races.py                  # last season and this season
   python build_races.py --years 2023,2024
   python build_races.py --force          # rebuild files that already exist
+  TELEMETRY=all python build_races.py    # telemetry for every season (default: this and last)
+  TELEMETRY=0 python build_races.py      # no telemetry at all (much smaller files)
 """
 import argparse
 import json
@@ -33,7 +40,21 @@ API = "https://api.openf1.org/v1/"
 HZ = 4
 OUT = Path("data")
 COMPOUNDS = {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"}
-SESSION_ORDER = ("Sprint", "Race")
+SESSION_ORDER = ("Sprint Shootout", "Sprint Qualifying", "Sprint", "Qualifying", "Race")
+RACE_TYPES = ("Sprint", "Race")
+FILE_V = 2                 # bump when new data is added to the files
+TEL_HZ = 2                 # telemetry samples per second
+# Telemetry: "recent" (default) = this season and last, "all", or "0"/"none" to skip.
+# It roughly doubles the data size, and GitHub Pages sites are limited to 1 GB.
+TELEMETRY = os.environ.get("TELEMETRY", "recent").strip().lower() or "recent"
+
+
+def want_telemetry(year):
+    if TELEMETRY in ("0", "none", "off", "false"):
+        return False
+    if TELEMETRY == "all":
+        return True
+    return year >= datetime.now(timezone.utc).year - 1
 UA = {"User-Agent": "pitwall-builder (github.com)"}
 
 
@@ -153,15 +174,19 @@ def retirement_reasons(year, rnd, sprint):
         return {}
 
 
-def fetch_location(api, sk, n, a, b, depth=0):
+def fetch_range(api, endpoint, sk, n, a, b, depth=0):
     q = f"session_key={sk}&driver_number={n}&date>={a.isoformat()}&date<{b.isoformat()}"
     try:
-        return api.get("location", q)
+        return api.get(endpoint, q)
     except ApiError:
         if depth >= 2:
             raise
         m = a + (b - a) / 2
-        return fetch_location(api, sk, n, a, m, depth + 1) + fetch_location(api, sk, n, m, b, depth + 1)
+        return fetch_range(api, endpoint, sk, n, a, m, depth + 1) + fetch_range(api, endpoint, sk, n, m, b, depth + 1)
+
+
+def slug(name):
+    return name.lower().replace(" ", "-")
 
 
 def build_session(api, sess, meeting, rnd):
@@ -170,12 +195,13 @@ def build_session(api, sess, meeting, rnd):
     rel = lambda s: (parse_dt(s) - t0).total_seconds() if s else None
     k = f"session_key={sk}"
 
+    is_race = sess.get("session_name") in RACE_TYPES
     laps_raw = api.get("laps", k)
     if not laps_raw:
         raise NoData()
     drivers_raw = api.get("drivers", k)
     position = api.get("position", k)
-    intervals = api.get("intervals", k)
+    intervals = api.get("intervals", k) if is_race else []
     pits_raw = api.get("pit", k)
     stints = api.get("stints", k)
     rc_raw = api.get("race_control", k)
@@ -210,7 +236,7 @@ def build_session(api, sess, meeting, rnd):
     for n, ls in by_drv.items():
         ls.sort(key=lambda l: l["lap_number"])
         starts = {l["lap_number"]: rel(l.get("date_start")) for l in ls}
-        if starts.get(1) is None and starts.get(2) is not None:
+        if is_race and starts.get(1) is None and starts.get(2) is not None:
             l1 = next((l for l in ls if l["lap_number"] == 1), None)
             d1 = num(l1.get("lap_duration")) if l1 else None
             starts[1] = starts[2] - (d1 if d1 else typical * 1.15)
@@ -229,21 +255,25 @@ def build_session(api, sess, meeting, rnd):
         if 1 in starts and starts[1] is not None:
             lap1_starts.append(starts[1])
         lap_rows[str(n)] = rows
-    lights = min(lap1_starts) if lap1_starts else min(r[1] for rs in lap_rows.values() for r in rs)
     race_end = max(ends)
-    frame0 = lights - 300
-    n_frames = int((race_end + 180 - frame0) * HZ) + 1
+    if is_race:
+        lights = min(lap1_starts) if lap1_starts else min(r[1] for rs in lap_rows.values() for r in rs)
+        frame0 = lights - 300
+        tail = 180
+    else:
+        lights, frame0, tail = 0.0, 0.0, 60   # qualifying: the clock runs from the session start
+    n_frames = int((race_end + tail - frame0) * HZ) + 1
     grid = frame0 + np.arange(n_frames) / HZ
 
     # --- car positions, one driver at a time
     circuit_key = sess.get("circuit_key") or meeting.get("circuit_key")
     rotation = circuit_rotation(circuit_key, year) if circuit_key else 0.0
     rot = rotator(rotation)
-    a, b = t0 + timedelta(seconds=frame0), t0 + timedelta(seconds=race_end + 180)
+    a, b = t0 + timedelta(seconds=frame0), t0 + timedelta(seconds=race_end + tail)
     pos, last_move, raw_xy = {}, {}, {}
     for d in drivers:
         n = d["n"]
-        rows = fetch_location(api, sk, n, a, b)
+        rows = fetch_range(api, "location", sk, n, a, b)
         pts = [(rel(r["date"]), r["x"], r["y"]) for r in rows if (r.get("x") or r.get("y"))]
         if len(pts) < 10:
             continue
@@ -302,7 +332,7 @@ def build_session(api, sess, meeting, rnd):
     pits.sort()
 
     # --- classification, with retirement reasons where available
-    reasons = retirement_reasons(year, rnd, sess.get("session_name") == "Sprint")
+    reasons = retirement_reasons(year, rnd, sess.get("session_name") == "Sprint") if is_race else {}
     laps_done = {int(k2): max((r[0] for r in v), default=0) for k2, v in lap_rows.items()}
     results = []
     for r in res_raw:
@@ -319,7 +349,7 @@ def build_session(api, sess, meeting, rnd):
             "time": gapval(r.get("duration")) if p == 1 else (g if isinstance(g, float) else None),
             "laps": r.get("number_of_laps") or laps_done.get(n, 0),
             "grid": None,
-            "outT": last_move.get(n) if cls in ("R", "N") else None,
+            "outT": last_move.get(n) if is_race and cls in ("R", "N") else None,
         })
 
     # --- track outline from the winner's fastest clean lap
@@ -351,7 +381,7 @@ def build_session(api, sess, meeting, rnd):
             "lightsOut": round(lights, 1), "raceEnd": round(race_end, 1),
             "hz": HZ, "frame0": round(frame0, 3), "frames": n_frames,
             "totalLaps": max((r[0] for rs in lap_rows.values() for r in rs), default=0),
-            "rotation": rotation, "source": "openf1",
+            "rotation": rotation, "source": "openf1", "kind": "race" if is_race else "qualifying",
             "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
         "track": track, "drivers": drivers, "pos": pos, "laps": lap_rows,
@@ -360,6 +390,131 @@ def build_session(api, sess, meeting, rnd):
                     (st.get("compound") or "").upper() if (st.get("compound") or "").upper() in COMPOUNDS else None,
                     st.get("tyre_age_at_start")] for st in stints if st.get("driver_number") is not None],
     }
+
+
+def jolpica(path):
+    try:
+        r = requests.get("https://api.jolpi.ca/ergast/f1/" + path, headers=UA, timeout=30)
+        time.sleep(0.3)
+        return r.json()["MRData"] if r.ok else None
+    except Exception:
+        return None
+
+
+def standings(year, rnd):
+    """Driver and constructor standings after this round, with the previous round for comparison."""
+    def lists(kind, r):
+        if r < 1:
+            return []
+        m = jolpica(f"{year}/{r}/{kind}Standings.json")
+        sl = (m or {}).get("StandingsTable", {}).get("StandingsLists", [])
+        return sl[0].get(kind[0].upper() + kind[1:] + "Standings", []) if sl else []
+
+    def ipos(x):
+        return int(x["position"]) if str(x.get("position", "")).isdigit() else None
+
+    cur, prev = lists("driver", rnd), lists("driver", rnd - 1)
+    if not cur:
+        return None
+    pmap = {x["Driver"]["driverId"]: x for x in prev}
+    drivers = []
+    for x in cur:
+        d = x["Driver"]
+        p = pmap.get(d["driverId"])
+        drivers.append([d.get("code") or d.get("familyName", "")[:3].upper(), f'{d.get("givenName", "")} {d.get("familyName", "")}'.strip(),
+                        (x.get("Constructors") or [{}])[-1].get("name", ""), ipos(x), float(x.get("points", 0)), int(x.get("wins", 0)),
+                        ipos(p) if p else None, float(p["points"]) if p else 0.0])
+    ccur, cprev = lists("constructor", rnd), lists("constructor", rnd - 1)
+    cmap = {x["Constructor"]["constructorId"]: x for x in cprev}
+    teams = []
+    for x in ccur:
+        p = cmap.get(x["Constructor"]["constructorId"])
+        teams.append([x["Constructor"].get("name", ""), ipos(x), float(x.get("points", 0)), int(x.get("wins", 0)),
+                      ipos(p) if p else None, float(p["points"]) if p else 0.0])
+    return {"drivers": drivers, "teams": teams}
+
+
+def build_telemetry(api, sess, meta, drivers, tel_dir):
+    """Speed, gear, throttle, brake and DRS per driver on a 2 Hz grid, one file per driver."""
+    sk, t0 = sess["session_key"], parse_dt(sess["date_start"])
+    frame0 = meta["frame0"]
+    end = frame0 + (meta["frames"] - 1) / meta["hz"]
+    n_tel = int((end - frame0) * TEL_HZ) + 1
+    grid = frame0 + np.arange(n_tel) / TEL_HZ
+    a, b = t0 + timedelta(seconds=frame0), t0 + timedelta(seconds=end)
+    tel_dir.mkdir(parents=True, exist_ok=True)
+    have = []
+    for d in drivers:
+        n = d["n"]
+        rows = fetch_range(api, "car_data", sk, n, a, b)
+        pts = sorted(((parse_dt(r["date"]) - t0).total_seconds(), r) for r in rows if r.get("date"))
+        if len(pts) < 10:
+            continue
+        t = np.array([p[0] for p in pts], float)
+        t, uniq = np.unique(t, return_index=True)
+        col = lambda key: np.array([float(pts[i][1].get(key) or 0) for i in uniq])
+        spd = np.interp(grid, t, col("speed"))
+        thr = np.interp(grid, t, col("throttle"))
+        prev = np.clip(np.searchsorted(t, grid, side="right") - 1, 0, len(t) - 1)
+        gear, brk, drs = col("n_gear")[prev], col("brake")[prev], col("drs")[prev]
+        idx = np.clip(np.searchsorted(t, grid), 1, len(t) - 1)
+        valid = (grid >= t[0]) & (grid <= t[-1]) & ((t[idx] - t[idx - 1]) <= 3.0)
+        chans = [
+            np.round(spd).astype(int),
+            np.clip(gear, 0, 8).astype(int),
+            (np.clip(np.round(thr / 5) * 5, 0, 100)).astype(int),
+            (brk > 0).astype(int),
+            np.where(drs >= 10, 2, np.where(drs == 8, 1, 0)).astype(int),
+        ]
+        segs, i = [], 0
+        while i < n_tel:
+            if not valid[i]:
+                i += 1
+                continue
+            j = i
+            while j < n_tel and valid[j]:
+                j += 1
+            seg = [i]
+            for c in chans:
+                part = c[i:j]
+                seg.append([int(part[0])] + np.diff(part).tolist())
+            segs.append(seg)
+            i = j
+        if segs:
+            (tel_dir / f"{n}.json").write_text(json.dumps({"hz": TEL_HZ, "frame0": frame0, "frames": n_tel, "segs": segs}, separators=(",", ":")))
+            have.append(n)
+    return have
+
+
+def add_extras(api, sess, data, rnd, tel_dir):
+    """Weather, team radio, tyre-set ages, standings and telemetry (the parts added in file version 2)."""
+    sk, t0 = sess["session_key"], parse_dt(sess["date_start"])
+    rel = lambda s: round((parse_dt(s) - t0).total_seconds(), 1)
+    k = f"session_key={sk}"
+    meta = data["meta"]
+    data["weather"] = [[rel(r["date"]), num(r.get("air_temperature"), 1), num(r.get("track_temperature"), 1),
+                        1 if r.get("rainfall") else 0, num(r.get("wind_speed"), 1), num(r.get("humidity"), 0)]
+                       for r in api.get("weather", k) if r.get("date")]
+    data["radio"] = sorted([rel(r["date"]), r["driver_number"], r["recording_url"]]
+                           for r in api.get("team_radio", k) if r.get("date") and r.get("recording_url"))
+    if "stints" not in data:
+        data["stints"] = [[st["driver_number"], st.get("lap_start"), st.get("lap_end"),
+                           (st.get("compound") or "").upper() if (st.get("compound") or "").upper() in COMPOUNDS else None,
+                           st.get("tyre_age_at_start")] for st in api.get("stints", k) if st.get("driver_number") is not None]
+    if meta.get("session") == "Race":
+        data["standings"] = standings(meta["year"], rnd)
+    meta["tel"] = build_telemetry(api, sess, meta, data["drivers"], tel_dir) if want_telemetry(meta["year"]) else []
+    data["v"] = FILE_V
+    return data
+
+
+def file_version(path):
+    try:
+        with open(path) as f:
+            m = re.match(r'\{"v":(\d+)', f.read(12))
+        return int(m.group(1)) if m else 0
+    except Exception:
+        return 0
 
 
 def official_rounds(year):
@@ -447,7 +602,7 @@ def main():
             break
         try:
             meetings = sorted(api.get("meetings", f"year={year}"), key=lambda m: m["date_start"])
-            sessions = api.get("sessions", f"year={year}&session_type=Race")
+            sessions = api.get("sessions", f"year={year}&session_type=Race") + api.get("sessions", f"year={year}&session_type=Qualifying")
         except ApiError as e:
             log(f"{year}: couldn't load the calendar: {e}")
             continue
@@ -471,7 +626,8 @@ def main():
             if end > now - timedelta(hours=4):
                 continue  # not finished yet
             rnd = rounds[mk]
-            path = OUT / str(year) / f"{rnd:02d}_{name.lower()}.json"
+            path = OUT / str(year) / f"{rnd:02d}_{slug(name)}.json"
+            tel_dir = path.with_suffix("")
             # A file built earlier under a different round number: move it to the right name
             old = have.get((by_key[mk].get("meeting_name"), name))
             if old and old != path and not path.exists():
@@ -479,17 +635,23 @@ def main():
                 data["meta"]["round"] = rnd
                 path.write_text(json.dumps(data, separators=(",", ":")))
                 old.unlink()
+                if old.with_suffix("").is_dir() and not tel_dir.exists():
+                    old.with_suffix("").rename(tel_dir)
                 log(f"Renumbered {old.name} -> {path.name}")
-            if path.exists() and not args.force:
+            upgrade = path.exists() and not args.force
+            if upgrade and file_version(path) >= FILE_V:
                 continue
             if time.time() > deadline:
                 log("Time budget reached; the next run will continue from here.")
                 stop = True
                 break
-            log(f"{year} round {rnd}: {by_key[mk].get('meeting_name')}, {name}")
+            log(f"{year} round {rnd}: {by_key[mk].get('meeting_name')}, {name}" + (" (adding new data)" if upgrade else ""))
             started = time.time()
             try:
-                data = build_session(api, sess, by_key[mk], rnd)
+                if upgrade:
+                    data = add_extras(api, sess, json.loads(path.read_text()), rnd, tel_dir)
+                else:
+                    data = add_extras(api, sess, build_session(api, sess, by_key[mk], rnd), rnd, tel_dir)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(data, separators=(",", ":")))
                 built += 1
@@ -505,6 +667,10 @@ def main():
                     log(first_error)
 
     log(f"Done: {built} built, {failed} failed, {nodata} without data.")
+    total = sum(f.stat().st_size for f in OUT.rglob("*.json")) if OUT.exists() else 0
+    log(f"Race data now takes {total / 1e6:.0f} MB (GitHub Pages sites can be up to 1 GB).")
+    if total > 850e6:
+        log("WARNING: close to the 1 GB GitHub Pages limit. Avoid TELEMETRY=all, or build fewer seasons.")
     if failed and not built:
         log("Every race failed to build, so nothing will be published. See the first error above.")
         sys.exit(1)
