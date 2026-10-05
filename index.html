@@ -84,6 +84,8 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:m
 .row:hover{background:rgba(255,255,255,.03)}
 .row.sel{background:var(--panel2)}
 .row.out{opacity:.4}
+.row.elim{opacity:.35;filter:grayscale(.6)}
+.row.elim .gap{font-size:13px}
 .row.out .gap{color:var(--red)}
 .row .pos{font:700 18px var(--cond);text-align:right;font-variant-numeric:tabular-nums}
 .row .sw{height:20px;border-radius:2px}
@@ -460,7 +462,7 @@ const S = {
   outline: [], fit: null, rot: 0, selected: null, order: [], rcShown: -1,
   retired: {}, events: [], evIdx: -1, seeked: true, momentsShown: '', loaded: false,
   lapEnd: {}, weather: [], radio: [], standingsData: null, telList: new Set(), telBase: '', tel: {},
-  battles: { battles: [], trains: [], passes: [] }, undercuts: [], chequers: [], sessionName: '',
+  battles: { battles: [], trains: [], passes: [] }, undercuts: [], chequers: [], sessionName: '', elim: {},
   momentFilter: 'key', chartTab: 'laps', chartSel: [], hideSlow: true, gapA: null, gapB: null, chartNow: null, chartW: 0,
   cmp: { a: null, la: null, b: null, lb: null, g: 0, playing: false, speed: 1 }, cmpCache: {}, drawn: {}, view: 'track'
 };
@@ -634,6 +636,7 @@ function prepare(D, file){
   computeRetirements();
   S.battles = S.isRace ? computeBattles() : { battles: [], trains: [], passes: [] };
   S.undercuts = S.isRace ? computeUndercuts() : [];
+  computeKnockouts();
   buildEvents();
   buildTower();
   renderResults();
@@ -691,6 +694,28 @@ function computeRetirements(){
   }
 }
 const isOut = (n, t) => { const r = S.retired[n]; return !!r && t >= r.t; };
+
+/* Qualifying knockouts: after Q1 and Q2 the slowest cars are out.
+   Q3 always has 10 cars; Q2 has 15 with 20 cars on the grid, 16 with 22. */
+function computeKnockouts(){
+  S.elim = {};
+  if (S.isRace || S.chequers.length < 2) return;
+  const N = S.drivers.size, q2 = 10 + Math.floor((N - 10) / 2);
+  if (N <= q2) return;
+  const pre = /sprint/i.test(S.sessionName) ? 'SQ' : 'Q';
+  for (const d of S.drivers.values()){
+    const r = S.results.find(x => x.n === d.n);
+    const pos = r && r.pos ? r.pos : 99;
+    const seg = pos > q2 ? 1 : pos > 10 ? 2 : 0;
+    if (!seg) continue;
+    const flag = S.chequers[seg - 1];
+    // a lap started before the flag still counts, so they're out once it ends
+    let t = flag;
+    for (const l of S.lapsBy[d.n] || []) if (l.t < flag && l.dur) t = Math.max(t, l.t + l.dur * 1000);
+    S.elim[d.n] = { t, seg, label: `Out ${pre}${seg}`, pos };
+  }
+}
+const isElim = (n, t) => { const e = S.elim[n]; return !!e && t >= e.t; };
 function lapAt(t){
   let v = 0;
   for (const k in S.lapsBy){ const l = lastAt(S.lapsBy[k], t); if (l && l.v > v) v = l.v; }
@@ -761,6 +786,10 @@ function buildEvents(){
   if (!S.isRace){
     const pre = /sprint/i.test(S.sessionName) ? 'SQ' : 'Q';
     S.chequers.forEach((t, i) => ev.push({ t, k: 'flag', text: i < 3 ? `End of ${pre}${i + 1}` : 'Chequered flag' }));
+    for (const seg of [1, 2]){
+      const out = Object.entries(S.elim).filter(([, e]) => e.seg === seg).sort((a, b) => a[1].pos - b[1].pos);
+      if (out.length) ev.push({ t: Math.max(...out.map(([, e]) => e.t)), k: 'out', text: `Knocked out in ${pre}${seg}: ${out.map(([n]) => code(n)).join(', ')}` });
+    }
     const pole = S.results.find(r => r.pos === 1);
     if (pole && S.chequers.length) ev.push({ t: S.chequers[S.chequers.length - 1] + 1, k: 'flag', text: `${code(pole.n)} takes pole${pole.time ? ', ' + fmtDur(pole.time) : ''}` });
   }
@@ -914,6 +943,7 @@ function draw(){
   }
   for (let i = order.length - 1; i >= 0; i--){
     const n = order[i], d = S.drivers.get(n); if (!d) continue;
+    if (isElim(n, S.t) && S.selected !== n) continue;
     const pt = sampleAt(n, S.t); if (!pt) continue;
     let fade = 1, gone = false;
     const ret = S.retired[n];
@@ -953,15 +983,20 @@ function buildTower(){
 function updateUI(){
   if (!S.loaded) return;
   const t = S.t;
-  const arr = [...S.drivers.values()].map(d => { const p = lastAt(S.posBy[d.n], t); return { d, p: p ? p.v : 99, out: isOut(d.n, t) }; });
-  arr.sort((a, b) => (a.out - b.out) || (a.out ? S.retired[b.d.n].t - S.retired[a.d.n].t : 0) || a.p - b.p || a.d.n - b.d.n);
+  const arr = [...S.drivers.values()].map(d => { const p = lastAt(S.posBy[d.n], t); return { d, p: p ? p.v : 99, out: isOut(d.n, t), elim: isElim(d.n, t) ? S.elim[d.n] : null }; });
+  arr.sort((a, b) => (a.out - b.out) || (a.out ? S.retired[b.d.n].t - S.retired[a.d.n].t : 0)
+    || (!!a.elim - !!b.elim) || (a.elim ? (b.elim.seg - a.elim.seg) || (a.elim.pos - b.elim.pos) : 0)
+    || a.p - b.p || a.d.n - b.d.n);
   S.order = arr.map(o => o.d.n);
   arr.forEach((o, i) => {
     const r = S.rows.get(o.d.n); if (!r) return;
     r.el.style.transform = `translateY(${i * ROW_H}px)`;
     r.el.classList.toggle('out', o.out);
-    r.pos.textContent = o.out || o.p === 99 ? '–' : o.p;
+    r.el.classList.toggle('elim', !!o.elim);
+    r.pos.textContent = o.out || o.p === 99 ? '–' : o.elim && o.elim.pos < 99 ? o.elim.pos : o.p;
+    r.gap.title = o.elim ? `Knocked out, best lap ${fmtDur(bestLap(o.d.n, t)) || 'none'}` : '';
     if (o.out) r.gap.textContent = 'OUT';
+    else if (o.elim) r.gap.textContent = o.elim.label;
     else if (!S.isRace) r.gap.textContent = fmtDur(bestLap(o.d.n, t));
     else if (i === 0) r.gap.textContent = 'Leader';
     else { const iv = lastAt(S.intBy[o.d.n], t); r.gap.textContent = iv ? fmtGap(iv.int ?? iv.gap) : ''; }
