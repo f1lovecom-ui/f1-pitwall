@@ -37,7 +37,10 @@ select{appearance:none;-webkit-appearance:none;padding-right:30px;min-width:0;te
 main{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:minmax(0,1fr) auto;grid-template-areas:"stage side" "time side";min-height:0}
 .stage{grid-area:stage;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .viewbar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto;flex:none}
-.viewbar .btn{margin-left:auto;flex:none}
+.viewbar .mapstyle{margin-left:auto;flex:none;min-height:34px;padding-top:5px;padding-bottom:5px}
+.viewbar .btn{flex:none}
+.mapattr{position:absolute;right:8px;top:6px;font-size:10px;color:rgba(201,209,222,.75);background:rgba(17,21,28,.55);padding:1px 6px;border-radius:4px;pointer-events:none}
+.mapattr[hidden]{display:none}
 .viewtabs button{white-space:nowrap}
 .viewport{position:relative;flex:1;min-height:0;overflow:hidden}
 .view{position:absolute;inset:0;overflow:auto;padding:18px 18px 28px;background:var(--bg)}
@@ -59,6 +62,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:m
 .hud .wx{display:flex;gap:10px;margin-top:8px;color:var(--muted);font-size:13px}
 .hud .wx b{color:var(--text);font-weight:600}
 .hud .wx .rain{color:#7FB2FF;font-weight:600}
+.hud .wx .lit{color:#FFE2A8;font-weight:600}
 .msg{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:rgba(27,34,48,.8)}
 .msg[hidden]{display:none}
 .msg .box{max-width:460px}
@@ -302,10 +306,12 @@ td .drv small{display:block;color:var(--muted);font-size:12px}
           <button role="tab" data-view="compare" aria-selected="false">Compare laps</button>
           <button role="tab" data-view="standings" aria-selected="false" hidden>Standings</button>
         </div>
+        <select id="mapStyle" aria-label="Map style" class="mapstyle"></select>
         <button class="btn" id="rotateBtn" title="Rotate map">Rotate</button>
       </div>
       <div class="viewport" id="viewport">
         <canvas id="map" aria-label="Track map with car positions. Click a car to see its telemetry."></canvas>
+        <div class="mapattr" id="mapAttr" hidden></div>
         <div class="hud">
           <div class="title" id="hudTitle"></div>
           <div class="sub" id="hudSub"></div>
@@ -464,7 +470,7 @@ const S = {
   lapEnd: {}, weather: [], radio: [], standingsData: null, telList: new Set(), telBase: '', tel: {},
   battles: { battles: [], trains: [], passes: [] }, undercuts: [], chequers: [], sessionName: '', elim: {},
   momentFilter: 'key', chartTab: 'laps', chartSel: [], hideSlow: true, gapA: null, gapB: null, chartNow: null, chartW: 0,
-  cmp: { a: null, la: null, b: null, lb: null, g: 0, playing: false, speed: 1 }, cmpCache: {}, drawn: {}, view: 'track'
+  cmp: { a: null, la: null, b: null, lb: null, g: 0, playing: false, speed: 1 }, cmpCache: {}, drawn: {}, view: 'track', geo: null, startAbs: null, corners: [], pitLane: [], lights: [], night: 0, mapStyle: 'dark'
 };
 
 /* ---------- race list ---------- */
@@ -629,6 +635,7 @@ function prepare(D, file){
     if (X){ for (let i = 0; i < X.length; i += 2) if (!isNaN(X[i])) S.outline.push([X[i], Y[i]]); }
   }
   S.rot = 0;
+  setupMapLayers(D, M);
   S.selected = null; S.order = []; S.rcShown = -1; S.evIdx = -1; S.momentsShown = ''; S.seeked = true;
   $('telPanel').hidden = true;
 
@@ -912,16 +919,10 @@ function draw(){
   const W = canvas.clientWidth, H = canvas.clientHeight;
   ctx.clearRect(0, 0, W, H);
   if (!S.fit) return;
+  ensureStatic();
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(stat, 0, 0); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  ctx.beginPath();
-  S.outline.forEach((p, i) => { const [x, y] = P(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-  ctx.closePath();
-  ctx.strokeStyle = COL.kerb; ctx.lineWidth = 17; ctx.stroke();
-  ctx.strokeStyle = COL.tarmac; ctx.lineWidth = 10; ctx.stroke();
-  const [sx, sy] = P(...S.outline[0]), [nx, ny] = P(...S.outline[Math.min(4, S.outline.length - 1)]);
-  const len = Math.hypot(nx - sx, ny - sy) || 1, px = -(ny - sy) / len, py = (nx - sx) / len;
-  ctx.beginPath(); ctx.moveTo(sx - px * 10, sy - py * 10); ctx.lineTo(sx + px * 10, sy + py * 10);
-  ctx.strokeStyle = COL.text; ctx.lineWidth = 3; ctx.lineCap = 'butt'; ctx.stroke(); ctx.lineCap = 'round';
 
   ctx.font = '700 12px "Barlow Condensed", "Arial Narrow", sans-serif';
   const order = S.order.length ? S.order : [...S.drivers.keys()];
@@ -962,6 +963,245 @@ function draw(){
   }
   ctx.globalAlpha = 1;
 }
+
+/* ---------- map layers: real-world basemap, pit lane, corners, floodlights ---------- */
+const MAPSTYLES = {
+  plain: null,
+  dark: { name: 'Dark map', url: (z, x, y, r) => `https://${'abcd'[(x + y) % 4]}.basemaps.cartocdn.com/dark_nolabels/${z}/${x}/${y}${r}.png`, retina: true, max: 20,
+          attr: '© OpenStreetMap contributors © CARTO', dim: 0.18, nightDim: 0.35 },
+  satellite: { name: 'Satellite', url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`, retina: false, max: 19,
+          attr: 'Imagery © Esri, Maxar, Earthstar Geographics', dim: 0.38, nightDim: 0.45 },
+};
+const HALF = Math.PI * 6378137, WORLD = 2 * HALF;
+const stat = document.createElement('canvas'), sctx = stat.getContext('2d');
+const tileCache = new Map();
+let statKey = '', tileTick = 0;
+function loadPref(k, d){ try { return localStorage.getItem(k) || d; } catch { return d; } }
+function savePref(k, v){ try { localStorage.setItem(k, v); } catch {} }
+S.mapStyle = loadPref('pitwall_map', 'dark');
+
+const localToMerc = (x, y) => { const g = S.geo; return [g.a * x + g.b * y + g.tx, g.c * x + g.d * y + g.ty]; };
+function mercToLocal(X, Y){
+  const g = S.geo, det = g.a * g.d - g.b * g.c, u = X - g.tx, v = Y - g.ty;
+  return [(g.d * u - g.b * v) / det, (-g.c * u + g.a * v) / det];
+}
+function screenToLocal(sx, sy){
+  const a = (sx - S.fit.ox) / S.fit.s, b = (sy - S.fit.oy) / S.fit.s;
+  let X, Y;
+  if (S.rot === 1){ X = b; Y = -a; } else if (S.rot === 2){ X = -a; Y = -b; } else if (S.rot === 3){ X = -b; Y = a; } else { X = a; Y = b; }
+  return [X, -Y];
+}
+function getTile(url){
+  let im = tileCache.get(url);
+  if (!im){
+    if (tileCache.size > 500) tileCache.clear();
+    im = new Image();
+    im.onload = () => { im.ok = true; tileTick++; };
+    im.onerror = () => { im.failed = true; };
+    im.src = url;
+    tileCache.set(url, im);
+  }
+  return im;
+}
+function drawTiles(style, dpr, W, H){
+  const det = Math.abs(S.geo.a * S.geo.d - S.geo.b * S.geo.c);
+  const mpp = Math.sqrt(det) / S.fit.s;                 // map metres per screen pixel
+  const z = Math.max(1, Math.min(style.max, Math.ceil(Math.log2(WORLD / 256 / mpp))));
+  const T = WORLD / Math.pow(2, z);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [sx, sy] of [[0, 0], [W, 0], [0, H], [W, H]]){
+    const [X, Y] = localToMerc(...screenToLocal(sx, sy));
+    minX = Math.min(minX, X); maxX = Math.max(maxX, X); minY = Math.min(minY, Y); maxY = Math.max(maxY, Y);
+  }
+  const x0 = Math.floor((minX + HALF) / T), x1 = Math.floor((maxX + HALF) / T);
+  const y0 = Math.floor((HALF - maxY) / T), y1 = Math.floor((HALF - minY) / T);
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) > 120) return;
+  const n = Math.pow(2, z), r = style.retina && dpr > 1 ? '@2x' : '';
+  const S2 = (X, Y) => P(...mercToLocal(X, Y));
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++){
+    if (ty < 0 || ty >= n) continue;
+    const im = getTile(style.url(z, ((tx % n) + n) % n, ty, r));
+    if (!im.ok) continue;
+    const X0 = -HALF + tx * T, Yt = HALF - ty * T;
+    const p0 = S2(X0, Yt), p1 = S2(X0 + T, Yt), p2 = S2(X0, Yt - T);
+    const w = im.naturalWidth, h = im.naturalHeight;
+    sctx.setTransform(dpr * (p1[0] - p0[0]) / w, dpr * (p1[1] - p0[1]) / w, dpr * (p2[0] - p0[0]) / h, dpr * (p2[1] - p0[1]) / h, dpr * p0[0], dpr * p0[1]);
+    sctx.drawImage(im, -0.6, -0.6, w + 1.2, h + 1.2);
+  }
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+// Sun elevation in degrees at a place and moment (good to about a degree)
+function sunElevation(ms, lat, lon){
+  const rad = Math.PI / 180, d = (ms - 946728000000) / 86400000;
+  const g = (357.529 + 0.98560028 * d) * rad, q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad, e = (23.439 - 0.00000036 * d) * rad;
+  const dec = Math.asin(Math.sin(e) * Math.sin(L)), ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const gmst = ((18.697374558 + 24.06570982441908 * d) % 24 + 24) % 24;
+  const H = (gmst * 15 + lon) * rad - ra;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(H)) / rad;
+}
+function nightLevel(){
+  if (!S.geo || !S.startAbs) return 0;
+  const el = sunElevation(S.startAbs + S.t, S.geo.lat, S.geo.lon);
+  return Math.min(1, Math.max(0, (1 - el) / 7));       // 0 in daylight, 1 once it's properly dark
+}
+
+// Pit lane: follow a car through a typical stop and keep the part away from the racing line
+function computePitLane(){
+  if (!S.outline.length) return [];
+  const pits = S.pits.filter(p => p.dur && p.dur > 12 && p.dur < 45).sort((a, b) => a.dur - b.dur);
+  const cands = pits.length ? [pits[pits.length >> 1], ...pits.slice(0, 6)] : [];
+  const step = Math.max(1, Math.floor(S.outline.length / 600));
+  const ol = S.outline.filter((_, i) => i % step === 0);
+  const distToTrack = (x, y) => { let m = Infinity; for (const [a, b] of ol){ const d = (a - x) * (a - x) + (b - y) * (b - y); if (d < m) m = d; } return Math.sqrt(m); };
+  for (const p of cands){
+    const pts = [];
+    for (let t = p.t - 30000; t <= p.t + p.dur * 1000 + 15000; t += 250){ const q = sampleAt(p.n, t); if (q) pts.push(q); }
+    if (pts.length < 40) continue;
+    const off = pts.map(([x, y]) => distToTrack(x, y) > 7);
+    let bi = -1, bl = 0;
+    for (let i = 0; i < off.length;){ if (!off[i]){ i++; continue; } let j = i; while (j < off.length && off[j]) j++; if (j - i > bl){ bl = j - i; bi = i; } i = j; }
+    if (bl < 20) continue;
+    const lane = pts.slice(Math.max(0, bi - 3), Math.min(pts.length, bi + bl + 3));
+    const len = lane.reduce((s2, q, i) => i ? s2 + Math.hypot(q[0] - lane[i - 1][0], q[1] - lane[i - 1][1]) : 0, 0);
+    if (len > 150 && len < 1500) return lane;
+  }
+  return [];
+}
+// Floodlight positions along both edges of the track and pit lane
+function lightSpots(){
+  const spots = [];
+  const along = (pts, every, side) => {
+    let acc = 0, flip = 1;
+    for (let i = 1; i < pts.length; i++){
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], seg = Math.hypot(x1 - x0, y1 - y0); if (!seg) continue;
+      acc += seg;
+      if (acc >= every){ acc = 0; flip = -flip; const nx = -(y1 - y0) / seg, ny = (x1 - x0) / seg; spots.push([x1 + nx * side * flip, y1 + ny * side * flip]); }
+    }
+  };
+  along([...S.outline, S.outline[0]], 55, 12);
+  if (S.pitLane.length) along(S.pitLane, 40, 8);
+  return spots;
+}
+function strokePath(c, pts, closed, P2){
+  c.beginPath();
+  pts.forEach((p, i) => { const [x, y] = P2(p[0], p[1]); i ? c.lineTo(x, y) : c.moveTo(x, y); });
+  if (closed) c.closePath();
+}
+function renderStatic(nightQ){
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  if (stat.width !== canvas.width || stat.height !== canvas.height){ stat.width = canvas.width; stat.height = canvas.height; }
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, stat.width, stat.height);
+  const night = nightQ / 20;
+  const style = S.geo ? MAPSTYLES[S.mapStyle] : null;
+  if (style){
+    drawTiles(style, dpr, W, H);
+    sctx.fillStyle = `rgba(12,16,26,${style.dim + style.nightDim * night})`;
+    sctx.fillRect(0, 0, stat.width, stat.height);
+  } else if (night > 0){
+    sctx.fillStyle = `rgba(4,7,14,${0.35 * night})`;
+    sctx.fillRect(0, 0, stat.width, stat.height);
+  }
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  sctx.lineJoin = 'round'; sctx.lineCap = 'round';
+  // widths from real life (track ~14 m, pit lane ~9 m), kept readable when zoomed far out
+  const tw = Math.max(5, Math.min(16, 14 * S.fit.s)), pw = Math.max(3, Math.min(10, 9 * S.fit.s)), k = tw / 11;
+  const tarmac = night > 0.5 ? '#66738E' : style ? '#56627A' : COL.tarmac;
+  // pit lane
+  if (S.pitLane.length){
+    strokePath(sctx, S.pitLane, false, P);
+    sctx.strokeStyle = 'rgba(10,13,20,.5)'; sctx.lineWidth = pw + 5; sctx.stroke();
+    sctx.strokeStyle = 'rgba(232,236,242,.6)'; sctx.lineWidth = pw + 2; sctx.stroke();
+    sctx.strokeStyle = tarmac; sctx.lineWidth = pw; sctx.stroke();
+  }
+  // track: dark verge, white edge lines, tarmac
+  strokePath(sctx, S.outline, true, P);
+  sctx.strokeStyle = 'rgba(10,13,20,.55)'; sctx.lineWidth = tw + 8; sctx.stroke();
+  sctx.strokeStyle = 'rgba(232,236,242,.75)'; sctx.lineWidth = tw + 2.5; sctx.stroke();
+  sctx.strokeStyle = tarmac; sctx.lineWidth = tw; sctx.stroke();
+  // floodlights when it's dark
+  if (night > 0 && S.lights.length){
+    sctx.globalCompositeOperation = 'lighter';
+    const rad = Math.max(12, Math.min(52, 36 * S.fit.s));
+    for (const [x, y] of S.lights){
+      const [px, py] = P(x, y);
+      const gr = sctx.createRadialGradient(px, py, 0, px, py, rad);
+      gr.addColorStop(0, `rgba(255,234,196,${0.42 * night})`); gr.addColorStop(0.45, `rgba(255,226,180,${0.14 * night})`); gr.addColorStop(1, 'rgba(255,236,200,0)');
+      sctx.fillStyle = gr; sctx.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+    }
+    sctx.fillStyle = `rgba(255,248,230,${0.9 * night})`;
+    for (const [x, y] of S.lights){ const [px, py] = P(x, y); sctx.fillRect(px - 1, py - 1, 2, 2); }
+    sctx.globalCompositeOperation = 'source-over';
+  }
+  // PIT label on the far side of the pit lane from the track, drawn above the lights
+  if (S.pitLane.length){
+    const mid = S.pitLane[S.pitLane.length >> 1];
+    let near = S.outline[0], nd = Infinity;
+    for (const q of S.outline){ const d = (q[0] - mid[0]) ** 2 + (q[1] - mid[1]) ** 2; if (d < nd){ nd = d; near = q; } }
+    const [mx, my] = P(mid[0], mid[1]), [tx2, ty2] = P(near[0], near[1]);
+    let dx = mx - tx2, dy = my - ty2; const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+    const lx = mx + dx * (pw + 11), ly = my + dy * (pw + 11);
+    sctx.font = '700 11px "Barlow Condensed", "Arial Narrow", sans-serif'; sctx.textAlign = 'center'; sctx.textBaseline = 'middle';
+    sctx.lineWidth = 3; sctx.strokeStyle = 'rgba(12,16,26,.9)'; sctx.strokeText('PIT LANE', lx, ly);
+    sctx.fillStyle = '#C9D1DE'; sctx.fillText('PIT LANE', lx, ly);
+    sctx.textBaseline = 'alphabetic';
+  }
+  // start/finish: chequered strip across the track
+  const [sx, sy] = P(...S.outline[0]), [nx, ny] = P(...S.outline[Math.min(4, S.outline.length - 1)]);
+  const len = Math.hypot(nx - sx, ny - sy) || 1, ux = (nx - sx) / len, uy = (ny - sy) / len, vx = -uy, vy = ux;
+  const half = 7 * k, cell = half / 2.5;
+  for (let i = -2.5; i < 2.5; i++) for (let j = 0; j < 2; j++){
+    sctx.fillStyle = (Math.floor(i + 2.5) + j) % 2 ? '#11151C' : '#F2F4F8';
+    const cx = sx + vx * (i + 0.5) * cell + ux * (j - 0.5) * cell, cy = sy + vy * (i + 0.5) * cell + uy * (j - 0.5) * cell;
+    sctx.save(); sctx.translate(cx, cy); sctx.rotate(Math.atan2(vy, vx)); sctx.fillRect(-cell / 2, -cell / 2, cell, cell); sctx.restore();
+  }
+  // corner numbers, placed on the outside of each corner
+  if (S.corners.length && S.fit.s * 1000 > 120){
+    let cxm = 0, cym = 0; for (const p of S.outline){ cxm += p[0]; cym += p[1]; } cxm /= S.outline.length; cym /= S.outline.length;
+    const [ccx, ccy] = P(cxm, cym);
+    sctx.font = '700 10px "Barlow Condensed", "Arial Narrow", sans-serif'; sctx.textAlign = 'center'; sctx.textBaseline = 'middle';
+    for (const [numb, letter, x, y] of S.corners){
+      const [px, py] = P(x, y);
+      let dx = px - ccx, dy = py - ccy; const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+      const lx = px + dx * (tw + 12), ly = py + dy * (tw + 12);
+      sctx.beginPath(); sctx.arc(lx, ly, 7.5, 0, Math.PI * 2);
+      sctx.fillStyle = 'rgba(17,21,28,.85)'; sctx.fill();
+      sctx.lineWidth = 1; sctx.strokeStyle = 'rgba(149,162,183,.7)'; sctx.stroke();
+      sctx.fillStyle = '#C9D1DE'; sctx.fillText(String(numb) + (letter || ''), lx, ly + 0.5);
+    }
+    sctx.textBaseline = 'alphabetic';
+  }
+  sctx.textAlign = 'start';
+}
+function ensureStatic(){
+  const nightQ = Math.round(nightLevel() * 20);
+  const key = [canvas.width, canvas.height, S.rot, S.fit.s.toFixed(5), Math.round(S.fit.ox), Math.round(S.fit.oy), S.geo ? S.mapStyle : 'plain', nightQ, tileTick, S.gen].join('|');
+  if (key !== statKey){ statKey = key; renderStatic(nightQ); }
+  S.night = nightQ / 20;
+}
+function setupMapLayers(D, M){
+  S.geo = M.geo || null;
+  S.startAbs = M.start ? Date.parse(M.start) : null;
+  S.corners = (D.track && D.track.corners) || [];
+  S.pitLane = computePitLane();
+  S.lights = lightSpots();
+  statKey = '';
+  const sel = $('mapStyle');
+  sel.innerHTML = '';
+  sel.add(new Option('Plain map', 'plain'));
+  for (const k of ['dark', 'satellite']) sel.add(new Option(MAPSTYLES[k].name + (S.geo ? '' : ' (not available)'), k));
+  for (const o of sel.options) if (o.value !== 'plain') o.disabled = !S.geo;
+  sel.value = S.geo ? S.mapStyle : 'plain';
+  sel.title = S.geo ? `Track placed on ${S.geo.circuit}` : 'This race file has no real-world placement yet. It is added the next time the builder upgrades it.';
+  updateAttribution();
+}
+function updateAttribution(){
+  const st = S.geo && S.view === 'track' ? MAPSTYLES[S.mapStyle] : null;
+  const el = $('mapAttr'); el.hidden = !st; if (st) el.textContent = st.attr;
+}
+$('mapStyle').onchange = e => { S.mapStyle = e.target.value; savePref('pitwall_map', S.mapStyle); statKey = ''; updateAttribution(); };
 
 /* ---------- timing tower ---------- */
 function buildTower(){
@@ -1014,7 +1254,8 @@ function updateUI(){
   if (S.isRace) $('hudBig').innerHTML = lap ? `<small>Lap </small>${lap}${S.totalLaps ? `<small> / ${S.totalLaps}</small>` : ''}` : '<small>Before the start</small>';
   else $('hudBig').textContent = fmtClock(Math.max(0, t - S.raceStart));
   const w = lastAt(S.weather, t);
-  $('wx').innerHTML = w ? `<span>Air <b>${Math.round(w.air)}°</b></span><span>Track <b>${Math.round(w.track)}°</b></span>${w.rain ? '<span class="rain">Rain</span>' : ''}` : '';
+  const nightTag = S.night > 0.85 ? '<span class="lit">Under lights</span>' : S.night > 0.1 ? '<span class="lit">Dusk</span>' : '';
+  $('wx').innerHTML = (w ? `<span>Air <b>${Math.round(w.air)}°</b></span><span>Track <b>${Math.round(w.track)}°</b></span>${w.rain ? '<span class="rain">Rain</span>' : ''}` : '') + nightTag;
   const f = flagAt(t), flagEl = $('flag');
   if (f){ flagEl.hidden = false; flagEl.dataset.k = f[0]; flagEl.textContent = f[1]; } else flagEl.hidden = true;
 
@@ -1224,6 +1465,8 @@ function setView(v){
   $('compare').hidden = v !== 'compare';
   $('standings').hidden = v !== 'standings';
   $('rotateBtn').hidden = v !== 'track';
+  $('mapStyle').hidden = v !== 'track';
+  updateAttribution();
   if (v !== 'compare') S.cmp.playing = false;
   if (!S.loaded) return;
   if (v === 'charts') renderCharts();

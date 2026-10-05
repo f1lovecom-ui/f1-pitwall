@@ -42,7 +42,8 @@ OUT = Path("data")
 COMPOUNDS = {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"}
 SESSION_ORDER = ("Sprint Shootout", "Sprint Qualifying", "Sprint", "Qualifying", "Race")
 RACE_TYPES = ("Sprint", "Race")
-FILE_V = 2                 # bump when new data is added to the files
+FILE_V = 3                 # bump when new data is added to the files
+GEO_URL = "https://raw.githubusercontent.com/bacinger/f1-circuits/master/f1-circuits.geojson"
 TEL_HZ = 2                 # telemetry samples per second
 # Telemetry: "recent" (default) = this season and last, "all", or "0"/"none" to skip.
 # It roughly doubles the data size, and GitHub Pages sites are limited to 1 GB.
@@ -152,14 +153,128 @@ def rotator(deg):
     return lambda x, y: (x * c - y * s, x * s + y * c)
 
 
+_circuit_cache = {}
+
+
+def circuit_info(circuit_key, year):
+    """Official map rotation and corner positions (MultiViewer), in the same raw units as car positions."""
+    key = (circuit_key, year)
+    if key not in _circuit_cache:
+        info = {"rotation": 0.0, "corners": []}
+        try:
+            r = requests.get(f"https://api.multiviewer.app/api/v1/circuits/{circuit_key}/{year}", headers=UA, timeout=30)
+            if r.ok:
+                j = r.json()
+                info["rotation"] = float(j.get("rotation") or 0)
+                for c in j.get("corners") or []:
+                    tp = c.get("trackPosition") or {}
+                    if tp.get("x") is not None and tp.get("y") is not None:
+                        info["corners"].append((c.get("number"), c.get("letter") or "", float(tp["x"]), float(tp["y"])))
+        except Exception:
+            pass
+        _circuit_cache[key] = info
+    return _circuit_cache[key]
+
+
 def circuit_rotation(circuit_key, year):
-    try:
-        r = requests.get(f"https://api.multiviewer.app/api/v1/circuits/{circuit_key}/{year}", headers=UA, timeout=30)
-        if r.ok:
-            return float(r.json().get("rotation") or 0)
-    except Exception:
-        pass
-    return 0.0
+    return circuit_info(circuit_key, year)["rotation"]
+
+
+def rotated_corners(info, rotation):
+    rot = rotator(rotation)
+    out = []
+    for numb, letter, x, y in info["corners"]:
+        rx, ry = rot(x, y)
+        out.append([numb, letter, int(round(rx / 10)), int(round(ry / 10))])
+    return out
+
+
+# ---------- placing the track on a real map ----------
+_geo_features = None
+R_EARTH = 6378137.0
+
+
+def geo_features():
+    """Real-world circuit outlines (bacinger/f1-circuits, MIT licence), downloaded once per run."""
+    global _geo_features
+    if _geo_features is None:
+        _geo_features = []
+        try:
+            r = requests.get(GEO_URL, headers=UA, timeout=60)
+            if r.ok:
+                for f in r.json().get("features", []):
+                    g = f.get("geometry") or {}
+                    lines = [g["coordinates"]] if g.get("type") == "LineString" else g.get("coordinates", []) if g.get("type") == "MultiLineString" else []
+                    pts = [pt for line in lines for pt in line]
+                    if len(pts) >= 20:
+                        lon = np.array([p[0] for p in pts], float)
+                        lat = np.array([p[1] for p in pts], float)
+                        mx = R_EARTH * np.radians(lon)
+                        my = R_EARTH * np.log(np.tan(np.pi / 4 + np.radians(lat) / 2))
+                        props = f.get("properties") or {}
+                        _geo_features.append({"id": props.get("id") or props.get("Name"), "name": props.get("Name"),
+                                              "xy": np.stack([mx, my], 1)})
+        except Exception as e:
+            log("  couldn't download real-world circuit outlines:", e)
+    return _geo_features
+
+
+def resample_loop(P, n=256):
+    P = np.asarray(P, float)
+    Q = np.vstack([P, P[:1]])
+    seg = np.hypot(*np.diff(Q, axis=0).T)
+    cum = np.concatenate([[0], np.cumsum(seg)])
+    t = np.linspace(0, cum[-1], n, endpoint=False)
+    return np.stack([np.interp(t, cum, Q[:, 0]), np.interp(t, cum, Q[:, 1])], 1)
+
+
+def similarity(P, Q, reflect):
+    """Best scale + rotation (or mirror) + shift taking P onto Q (Umeyama)."""
+    mp, mq = P.mean(0), Q.mean(0)
+    X, Y = P - mp, Q - mq
+    U, S, Vt = np.linalg.svd(Y.T @ X / len(P))
+    D = np.eye(2)
+    det = np.linalg.det(U @ Vt)
+    D[1, 1] = (-1 if det > 0 else 1) if reflect else (1 if det > 0 else -1)
+    Rm = U @ D @ Vt
+    s_ = np.trace(np.diag(S) @ D) / ((X ** 2).sum() / len(P))
+    M = s_ * Rm
+    t = mq - M @ mp
+    rms = np.sqrt(((Q - (P @ M.T + t)) ** 2).sum(1).mean())
+    return M, t, rms / np.sqrt((Y ** 2).sum(1).mean())
+
+
+def fit_geo(track):
+    """Match the track outline to a real circuit and return the map placement, or None."""
+    xs, ys = track.get("x") or [], track.get("y") or []
+    feats = geo_features()
+    if len(xs) < 50 or not feats:
+        return None
+    P = resample_loop(np.stack([xs, ys], 1))
+    best = None
+    for f in feats:
+        Q0 = resample_loop(f["xy"])
+        for Qd in (Q0, Q0[::-1]):
+            for k in range(0, len(Qd), 4):
+                Qs = np.roll(Qd, -k, axis=0)
+                for refl in (False, True):
+                    M, t, err = similarity(P, Qs, refl)
+                    if best is None or err < best[0]:
+                        best = (err, f, Qd, k, refl)
+    _, f, Qd, k0, refl = best
+    err, bestM, bestT = None, None, None
+    for k in range(k0 - 4, k0 + 5):   # refine around the best match
+        M, t, e = similarity(P, np.roll(Qd, -(k % len(Qd)), axis=0), refl)
+        if err is None or e < err:
+            err, bestM, bestT = e, M, t
+    if err > 0.08:
+        return None   # no circuit matches well enough (new or changed layout)
+    cx, cy = bestM @ P.mean(0) + bestT
+    lon = float(np.degrees(cx / R_EARTH))
+    lat = float(np.degrees(2 * np.arctan(np.exp(cy / R_EARTH)) - np.pi / 2))
+    return {"a": float(bestM[0, 0]), "b": float(bestM[0, 1]), "c": float(bestM[1, 0]), "d": float(bestM[1, 1]),
+            "tx": float(bestT[0]), "ty": float(bestT[1]), "lat": round(lat, 5), "lon": round(lon, 5),
+            "fit": round(float(err), 4), "circuit": f["name"]}
 
 
 def retirement_reasons(year, rnd, sprint):
@@ -267,7 +382,8 @@ def build_session(api, sess, meeting, rnd):
 
     # --- car positions, one driver at a time
     circuit_key = sess.get("circuit_key") or meeting.get("circuit_key")
-    rotation = circuit_rotation(circuit_key, year) if circuit_key else 0.0
+    cinfo = circuit_info(circuit_key, year) if circuit_key else {"rotation": 0.0, "corners": []}
+    rotation = cinfo["rotation"]
     rot = rotator(rotation)
     a, b = t0 + timedelta(seconds=frame0), t0 + timedelta(seconds=race_end + tail)
     pos, last_move, raw_xy = {}, {}, {}
@@ -382,6 +498,7 @@ def build_session(api, sess, meeting, rnd):
             "hz": HZ, "frame0": round(frame0, 3), "frames": n_frames,
             "totalLaps": max((r[0] for rs in lap_rows.values() for r in rs), default=0),
             "rotation": rotation, "source": "openf1", "kind": "race" if is_race else "qualifying",
+            "start": sess["date_start"],
             "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
         "track": track, "drivers": drivers, "pos": pos, "laps": lap_rows,
@@ -487,23 +604,36 @@ def build_telemetry(api, sess, meta, drivers, tel_dir):
 
 
 def add_extras(api, sess, data, rnd, tel_dir):
-    """Weather, team radio, tyre-set ages, standings and telemetry (the parts added in file version 2)."""
+    """Everything added after file version 1. Only the parts a file is missing are fetched,
+    so upgrading an older file is quick."""
     sk, t0 = sess["session_key"], parse_dt(sess["date_start"])
     rel = lambda s: round((parse_dt(s) - t0).total_seconds(), 1)
     k = f"session_key={sk}"
     meta = data["meta"]
-    data["weather"] = [[rel(r["date"]), num(r.get("air_temperature"), 1), num(r.get("track_temperature"), 1),
-                        1 if r.get("rainfall") else 0, num(r.get("wind_speed"), 1), num(r.get("humidity"), 0)]
-                       for r in api.get("weather", k) if r.get("date")]
-    data["radio"] = sorted([rel(r["date"]), r["driver_number"], r["recording_url"]]
-                           for r in api.get("team_radio", k) if r.get("date") and r.get("recording_url"))
+    meta.setdefault("start", sess["date_start"])
+    if "weather" not in data:
+        data["weather"] = [[rel(r["date"]), num(r.get("air_temperature"), 1), num(r.get("track_temperature"), 1),
+                            1 if r.get("rainfall") else 0, num(r.get("wind_speed"), 1), num(r.get("humidity"), 0)]
+                           for r in api.get("weather", k) if r.get("date")]
+    if "radio" not in data:
+        data["radio"] = sorted([rel(r["date"]), r["driver_number"], r["recording_url"]]
+                               for r in api.get("team_radio", k) if r.get("date") and r.get("recording_url"))
     if "stints" not in data:
         data["stints"] = [[st["driver_number"], st.get("lap_start"), st.get("lap_end"),
                            (st.get("compound") or "").upper() if (st.get("compound") or "").upper() in COMPOUNDS else None,
                            st.get("tyre_age_at_start")] for st in api.get("stints", k) if st.get("driver_number") is not None]
-    if meta.get("session") == "Race":
+    if meta.get("session") == "Race" and "standings" not in data:
         data["standings"] = standings(meta["year"], rnd)
-    meta["tel"] = build_telemetry(api, sess, meta, data["drivers"], tel_dir) if want_telemetry(meta["year"]) else []
+    if "tel" not in meta:
+        meta["tel"] = build_telemetry(api, sess, meta, data["drivers"], tel_dir) if want_telemetry(meta["year"]) else []
+    track = data.setdefault("track", {"x": [], "y": []})
+    if "corners" not in track:
+        ck = sess.get("circuit_key")
+        track["corners"] = rotated_corners(circuit_info(ck, meta["year"]), meta.get("rotation", 0.0)) if ck else []
+    if "geo" not in meta:
+        meta["geo"] = fit_geo(track)
+        g = meta["geo"]
+        log(f"  placed on the map: {g['circuit']} (match error {g['fit']:.3f})" if g else "  no real-world map match for this layout")
     data["v"] = FILE_V
     return data
 
@@ -584,7 +714,7 @@ def main():
     ap.add_argument("--budget-min", type=float, default=float(os.environ.get("BUDGET_MIN", "300")))
     args = ap.parse_args()
 
-    log("Pit Wall builder v3 (qualifying, telemetry, weather, radio, standings)")
+    log("Pit Wall builder v4 (real-world maps, pit lanes, corners, night lighting)")
     now = datetime.now(timezone.utc)
     years = [int(y) for y in re.split(r"[,\s]+", args.years.strip()) if y] or [now.year - 1, now.year]
     skipped = [y for y in years if y < 2023]
